@@ -1,9 +1,14 @@
 import React from 'react';
 
 /**
- * A wrapper around React.lazy that detects if a chunk fails to load
- * (usually due to a new deployment/build) and reloads the page automatically
- * after a few retries.
+ * Loads a React component with automatic retry and a one-time page reload on persistent chunk/network failures.
+ *
+ * Attempts to import the given module and, on transient network or chunk-loading errors, retries with exponential backoff.
+ * If retries are exhausted the first time the error persists, triggers a single page reload (guarded via sessionStorage).
+ * If the failure continues after the reload guard, returns a simple error fallback component that displays a warning and a Reload button.
+ *
+ * @param importFn - Function that dynamically imports the module containing the component as a default export.
+ * @returns A value suitable for React.lazy: the module's default export component, or a fallback component when loading cannot succeed.
  */
 export function safeLazy<T extends React.ComponentType<any>>(
     importFn: () => Promise<{ default: T }>

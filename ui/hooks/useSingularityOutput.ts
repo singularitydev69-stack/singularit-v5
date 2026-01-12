@@ -14,6 +14,13 @@ export interface SingularityOutputState {
     setPinnedProvider: (providerId: string) => void;
 }
 
+/**
+ * Exposes the computed Singularity output state for a given AI turn, honoring forced or user-pinned provider selection and normalizing response metadata.
+ *
+ * @param aiTurnId - The ID of the AI turn to inspect; when null, returns a default empty state.
+ * @param forcedProviderId - Optional provider ID that takes precedence over any pinned provider for selecting responses.
+ * @returns A SingularityOutputState describing the current output (or null), loading and error flags, the effective providerId, raw text, any error, and a `setPinnedProvider` callback to pin a provider for the given `aiTurnId`.
+ */
 export function useSingularityOutput(aiTurnId: string | null, forcedProviderId?: string | null): SingularityOutputState {
     const turnsMap = useAtomValue(turnsMapAtom);
     const pinnedProviders = useAtomValue(pinnedSingularityProvidersAtom);

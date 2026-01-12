@@ -45,12 +45,12 @@ export function createAuthErrorMessage(unauthorizedProviders, context) {
 }
 
 /**
- * Validates and adjusts provider selections before workflow execution.
- * 
- * - Filters out unauthorized batch providers
- * - Applies ephemeral fallback for locked but unauthorized synth/mapper
- * - Returns warnings for UI to display
- */
+ * Validate and resolve provider selections for a request, returning adjusted providers, mapper, singularity, and UI warnings.
+ *
+ * @param {Object} request - Request options; may include `providers` (string[]), `mapper` (string), and `singularity` (string).
+ * @param {Object} authStatus - Current authorization state used to determine which providers are allowed.
+ * @param {string[]} availableProviders - Provider IDs that are currently available for selection.
+ * @returns {{providers: string[], mapper: string, singularity: string, warnings: string[]}} An object containing the final list of providers, the resolved mapper and singularity provider IDs, and any user-facing warning messages explaining changes made.
 export async function runPreflight(request, authStatus, availableProviders) {
     let locks = {};
     const warnings = [];
@@ -117,4 +117,3 @@ export async function runPreflight(request, authStatus, availableProviders) {
 
     return { providers, mapper, singularity, warnings };
 }
-

@@ -22,7 +22,10 @@ export async function getProviderLocks(): Promise<ProviderLocks> {
 }
 
 /**
- * Write locks to chrome.storage.local
+ * Set the lock state for a provider role in chrome.storage.local.
+ *
+ * @param role - The provider role to update; either `'mapping'` or `'singularity'`
+ * @param locked - The lock state to apply for the specified role
  */
 export async function setProviderLock(
     role: 'mapping' | 'singularity',
