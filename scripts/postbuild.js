@@ -34,9 +34,21 @@ if (fs.existsSync("src/oi.html"))
 // copy fonts
 if (fs.existsSync("ui/fonts")) {
   fs.mkdirSync("dist/ui/fonts", { recursive: true });
+  // Recursive copy function
+  function copyRecursive(src, dest) {
+    if (fs.statSync(src).isDirectory()) {
+      fs.mkdirSync(dest, { recursive: true });
+      fs.readdirSync(src).forEach(child => {
+        copyRecursive(p.join(src, child), p.join(dest, child));
+      });
+    } else {
+      fs.copyFileSync(src, dest);
+    }
+  }
+  
   const fonts = fs.readdirSync("ui/fonts");
   for (const font of fonts) {
-    fs.copyFileSync(p.join("ui/fonts", font), p.join("dist/ui/fonts", font));
+    copyRecursive(p.join("ui/fonts", font), p.join("dist/ui/fonts", font));
   }
 }
 

@@ -16,7 +16,10 @@ export function safeLazy<T extends React.ComponentType<any>>(
 
         const load = async (): Promise<{ default: T }> => {
             try {
-                return await importFn();
+                const module = await importFn();
+                // Reset counter on success so next failure in same session can still reload
+                sessionStorage.removeItem(RELOAD_COUNTER_KEY);
+                return module;
             } catch (error: any) {
                 const errorName = error?.name || "";
                 const errorMessage = error?.message || "";
@@ -39,8 +42,22 @@ export function safeLazy<T extends React.ComponentType<any>>(
                     window.location.reload();
                 }
 
-                // Return a dummy component to satisfy Typescript
-                return { default: (() => null) as unknown as T };
+                // Return a user-friendly error component instead of null
+                const ErrorFallback = () => React.createElement(
+                    'div',
+                    { className: 'flex flex-col items-center justify-center p-8 text-text-muted' },
+                    React.createElement('div', { className: 'mb-4 text-xl' }, '⚠️'),
+                    React.createElement('p', { className: 'mb-4' }, 'Component failed to load'),
+                    React.createElement(
+                        'button',
+                        {
+                            className: 'px-4 py-2 bg-surface-raised hover:bg-surface-highlight rounded border border-border-subtle transition-colors',
+                            onClick: () => window.location.reload()
+                        },
+                        'Reload'
+                    )
+                );
+                return { default: ErrorFallback as unknown as T };
             }
         };
 

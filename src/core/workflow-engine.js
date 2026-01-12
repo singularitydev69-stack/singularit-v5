@@ -209,7 +209,8 @@ export class WorkflowEngine {
     if (step.type === 'prompt') {
       const resultsObj = result?.results || {};
       const successfulCount = Object.values(resultsObj).filter(r => r.status === 'completed').length;
-      if (resolvedContext?.type !== 'recompute' && successfulCount < 2) {
+      const mappingPlanned = Array.isArray(steps) && steps.some(s => s && s.type === 'mapping');
+      if (mappingPlanned && resolvedContext?.type !== 'recompute' && successfulCount < 2) {
         return "insufficient_witnesses";
       }
     }
@@ -357,6 +358,7 @@ export class WorkflowEngine {
       // ✅ CRITICAL: Ensure cognitive artifacts are persisted
       mapperArtifact: context?.mapperArtifact,
       singularityOutput: context?.singularityOutput,
+      storedAnalysis: context?.storedAnalysis,
     };
     if (resolvedContext?.type === "recompute") {
       persistRequest.sourceTurnId = resolvedContext.sourceTurnId;

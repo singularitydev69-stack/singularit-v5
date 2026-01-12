@@ -32,13 +32,14 @@ function analyzeMetafile(metaPath, bundleName) {
 
     // Get outputs
     const outputs = Object.entries(metafile.outputs);
-    const mainOutput = outputs.find(([_, info]) => !info.entryPoint) || outputs[0];
+    const mainOutput = outputs.find(([_, info]) => info.entryPoint) || outputs[0];
     const outputBytes = mainOutput ? mainOutput[1].bytes : 0;
 
     output += `Summary:\n`;
     output += `  Total Input:  ${formatBytes(totalInputBytes)}\n`;
     output += `  Bundle Size:  ${formatBytes(outputBytes)}\n`;
-    output += `  Compression:  ${((outputBytes / totalInputBytes) * 100).toFixed(1)}%\n\n`;
+    const compression = totalInputBytes > 0 ? ((outputBytes / totalInputBytes) * 100).toFixed(1) + "%" : "0.0%";
+    output += `  Compression:  ${compression}\n\n`;
 
     output += `Top 100 Largest Modules:\n`;
     output += `${"─".repeat(80)}\n`;

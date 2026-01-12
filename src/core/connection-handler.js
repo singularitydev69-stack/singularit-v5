@@ -454,6 +454,15 @@ export class ConnectionHandler {
         executeRequest,
         resolvedContext,
       );
+
+      const firstPromptStep = Array.isArray(workflowRequest?.steps)
+        ? workflowRequest.steps.find((s) => s && s.type === "prompt")
+        : null;
+      const effectiveProviders =
+        Array.isArray(firstPromptStep?.payload?.providers) &&
+        firstPromptStep.payload.providers.length > 0
+          ? firstPromptStep.payload.providers
+          : (executeRequest.providers || []);
       // ========================================================================
       // TURN_CREATED message
       // ========================================================================
@@ -474,7 +483,7 @@ export class ConnectionHandler {
             userTurnId,
             aiTurnId,
             // ✅ Include actual providers being used so UI doesn't guess from stale state
-            providers: executeRequest.providers || [],
+            providers: effectiveProviders,
             mappingProvider: executeRequest.mapper || null,
           });
         } catch (_) { }
@@ -489,7 +498,7 @@ export class ConnectionHandler {
             type: "inflight_workflow",
             requestType: executeRequest.type,
             userMessage: executeRequest.userMessage,
-            providers: executeRequest.providers || [],
+            providers: effectiveProviders,
             providerMeta: executeRequest.providerMeta || {},
             runId,
             createdAt: Date.now(),

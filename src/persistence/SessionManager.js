@@ -224,6 +224,9 @@ export class SessionManager {
     const mapperArtifact = request?.mapperArtifact
       ? this._toJsonSafe(request.mapperArtifact)
       : undefined;
+    const storedAnalysis = request?.storedAnalysis
+      ? this._toJsonSafe(request.storedAnalysis)
+      : undefined;
     const singularityOutput = request?.singularityOutput
       ? this._toJsonSafe(request.singularityOutput)
       : undefined;
@@ -243,6 +246,7 @@ export class SessionManager {
       mappingResponseCount: this.countResponses(result.mappingOutputs),
       singularityResponseCount: this.countResponses(result.singularityOutputs),
       ...(mapperArtifact ? { mapperArtifact } : {}),
+      ...(storedAnalysis ? { storedAnalysis } : {}),
       ...(singularityOutput ? { singularityOutput } : {}),
       lastContextSummary: contextSummary,
       meta: await this._attachRunIdMeta(aiTurnId),
@@ -290,6 +294,7 @@ export class SessionManager {
 
     // 6) Update session lastTurnId
     sessionRecord.lastTurnId = aiTurnId;
+    if (storedAnalysis) sessionRecord.lastStructuralTurnId = aiTurnId;
     sessionRecord.updatedAt = now;
     await this.adapter.put("sessions", sessionRecord);
 
@@ -365,6 +370,9 @@ export class SessionManager {
     const mapperArtifact = request?.mapperArtifact
       ? this._toJsonSafe(request.mapperArtifact)
       : undefined;
+    const storedAnalysis = request?.storedAnalysis
+      ? this._toJsonSafe(request.storedAnalysis)
+      : undefined;
     const singularityOutput = request?.singularityOutput
       ? this._toJsonSafe(request.singularityOutput)
       : undefined;
@@ -384,6 +392,7 @@ export class SessionManager {
       mappingResponseCount: this.countResponses(result.mappingOutputs),
       singularityResponseCount: this.countResponses(result.singularityOutputs),
       ...(mapperArtifact ? { mapperArtifact } : {}),
+      ...(storedAnalysis ? { storedAnalysis } : {}),
       ...(singularityOutput ? { singularityOutput } : {}),
       lastContextSummary: contextSummary,
       meta: await this._attachRunIdMeta(aiTurnId),
@@ -433,6 +442,7 @@ export class SessionManager {
     const session = await this.adapter.get("sessions", sessionId);
     if (session) {
       session.lastTurnId = aiTurnId;
+      if (storedAnalysis) session.lastStructuralTurnId = aiTurnId;
       session.lastActivity = now;
       // If session.turnCount was previously undefined, use nextSequence + 2 (the accurate total after this extend)
       const computedNewCount =
@@ -1253,6 +1263,10 @@ export class SessionManager {
       hasRunConcierge: false,
       lastSingularityProviderId: null,
       activeWorkflow: null,
+      // Handoff V2 fields
+      turnInCurrentInstance: 0,    // Tracks Turn 1, 2, 3+ within current instance
+      pendingHandoff: null,        // ConciergeDelta from last response
+      commitPending: false,        // True when COMMIT detected, triggers fresh spawn
     };
   }
 

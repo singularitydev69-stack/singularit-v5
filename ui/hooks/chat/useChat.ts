@@ -100,12 +100,10 @@ export function useChat() {
       // No pending cache: rely on Jotai atom serialization across updaters
 
       try {
-        const effectiveMappingProvider =
-          mappingProvider ||
-          (activeProviders.length > 0 ? (activeProviders[0] as any) : 'gemini');
-        const shouldUseMapping = mappingEnabled ?? true;
+        const shouldUseMapping = mappingEnabled && mappingProvider !== null;
+        const effectiveMappingProvider = mappingProvider;
 
-        const effectiveSingularityProvider = singularityProvider || (activeProviders.length > 0 ? (activeProviders[0] as any) : 'gemini');
+        const effectiveSingularityProvider = singularityProvider;
 
         const isInitialize =
           mode === "new" && (!currentSessionId || turnIds.length === 0);

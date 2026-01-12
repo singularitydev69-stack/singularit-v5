@@ -32,6 +32,8 @@ export class WorkflowCompiler {
     this._validateRequest(request);
     this._validateContext(resolvedContext);
 
+    const compileRequest = this._applyBatchGating(request, resolvedContext);
+
     const workflowId = this._generateWorkflowId(resolvedContext.type);
     const steps = [];
     // Track created step IDs to ensure correct linkage
@@ -46,8 +48,8 @@ export class WorkflowCompiler {
       case "initialize":
       case "extend":
         // Batch step if providers specified
-        if (request.providers && request.providers.length > 0) {
-          const batchStep = this._createBatchStep(request, resolvedContext);
+        if (compileRequest.providers && compileRequest.providers.length > 0) {
+          const batchStep = this._createBatchStep(compileRequest, resolvedContext);
           steps.push(batchStep);
           batchStepId = batchStep.stepId;
         }
@@ -85,15 +87,15 @@ export class WorkflowCompiler {
     }
 
     // Mapping step first
-    if (this._needsMappingStep(request, resolvedContext)) {
-      const mappingStep = this._createMappingStep(request, resolvedContext, {
+    if (this._needsMappingStep(compileRequest, resolvedContext)) {
+      const mappingStep = this._createMappingStep(compileRequest, resolvedContext, {
         batchStepId,
       });
       steps.push(mappingStep);
     }
 
     const workflowContext = this._buildWorkflowContext(
-      request,
+      compileRequest,
       resolvedContext,
     );
 
@@ -122,6 +124,7 @@ export class WorkflowCompiler {
         providerContexts:
           context.type === "extend" ? context.providerContexts : undefined,
         previousContext: context.previousContext || null,
+        previousAnalysis: context.previousAnalysis || null,
         providerMeta: request.providerMeta || {},
         useThinking: !!request.useThinking,
       },
@@ -181,7 +184,23 @@ export class WorkflowCompiler {
       return context.stepType === "mapping";
     }
     // Check primitive property
-    return !!request.includeMapping;
+    if (!request || !request.includeMapping) return false;
+    const providers = Array.isArray(request.providers) ? request.providers : [];
+    return providers.length >= 2;
+  }
+
+  _applyBatchGating(request, resolvedContext) {
+    if (!request || typeof request !== "object") return request;
+    if (resolvedContext?.type !== "extend") return request;
+    if (request.batchAutoRunEnabled) return request;
+
+    const provider =
+      request.singularity ||
+      (Array.isArray(request.providers) ? request.providers[0] : null);
+
+    if (!provider) return request;
+
+    return { ...request, providers: [provider] };
   }
 
   // ============================================================================

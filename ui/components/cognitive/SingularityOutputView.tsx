@@ -25,14 +25,15 @@ const SingularityOutputView: React.FC<SingularityOutputViewProps> = ({
     const { output, isError, error, providerId } = singularityState;
 
     if (isError) {
+        const errorObj = error as Record<string, any> | null;
         return (
             <div className="py-8">
                 <PipelineErrorBanner
                     type="singularity"
                     failedProviderId={providerId || aiTurn.meta?.singularity || ""}
                     onRetry={(pid) => onRecompute({ providerId: pid })}
-                    errorMessage={typeof error === 'string' ? error : error?.message}
-                    requiresReauth={!!error?.requiresReauth}
+                    errorMessage={typeof error === 'string' ? error : errorObj?.message}
+                    requiresReauth={!!errorObj?.requiresReauth}
                 />
             </div>
         );
@@ -72,12 +73,6 @@ const SingularityOutputView: React.FC<SingularityOutputViewProps> = ({
         );
     }
 
-    const handleCopy = () => {
-        if (output?.text) {
-            navigator.clipboard.writeText(output.text);
-        }
-    };
-
     return (
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Main Response Container - Clean and readable */}
@@ -108,7 +103,7 @@ const SingularityOutputView: React.FC<SingularityOutputViewProps> = ({
                     </div>
                     <div className="flex items-center gap-2">
                         <CopyButton
-                            onCopy={handleCopy}
+                            text={output?.text || ""}
                             label="Copy response"
                             variant="icon"
                         />

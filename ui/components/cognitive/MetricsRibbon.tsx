@@ -96,8 +96,8 @@ export const MetricsRibbon: React.FC<MetricsRibbonProps> = ({
                         <div className="mt-2">
                             <span className="text-text-secondary">Evidence:</span>
                             <ul className="mt-1 space-y-0.5 text-[11px]">
-                                {problemStructure.evidence.slice(0, 5).map((e) => (
-                                    <li key={e}>• {e}</li>
+                                {problemStructure.evidence.slice(0, 5).map((e, idx) => (
+                                    <li key={`${e}-${idx}`}>• {e}</li>
                                 ))}
                             </ul>
                         </div>

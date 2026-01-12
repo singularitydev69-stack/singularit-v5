@@ -1,4 +1,4 @@
-import { Claim, Edge, MapperArtifact, ParsedMapperOutput, GraphTopology, GraphNode, GraphEdge } from './contract';
+import { Claim, Edge, MapperArtifact, ParsedMapperOutput, GraphTopology, GraphNode, GraphEdge, ConciergeDelta } from './contract';
 
 /**
  * Shared Parsing Utilities for ALL_AVAILABLE_OPTIONS and GRAPH_TOPOLOGY
@@ -418,7 +418,7 @@ export function parseProseGraphTopology(text: string): GraphTopology | null {
 /**
  * Pattern to match GRAPH_TOPOLOGY headers in various formats
  */
-const GRAPH_TOPOLOGY_PATTERN = /\n#{1,3}\s*[^\w\n].*?GRAPH[_\s]*TOPOLOGY|\n?[🔬📊🗺️]*\s*={0,}GRAPH[_\s]*TOPOLOGY={0,}|\n?[🔬📊🗺️]\s*GRAPH[_\s]*TOPOLOGY|={3,}\s*GRAPH[_\s]*TOPOLOGY\s*={3,}/iu;
+const GRAPH_TOPOLOGY_PATTERN = /\n#{1,3}\s*[^\w\n].*?GRAPH[_\s]*TOPOLOGY|\n?(?:🔬|📊|🗺️)*\s*={0,}GRAPH[_\s]*TOPOLOGY={0,}|\n?(?:🔬|📊|🗺️)\s*GRAPH[_\s]*TOPOLOGY|={3,}\s*GRAPH[_\s]*TOPOLOGY\s*={3,}/iu;
 
 /**
  * Find position of GRAPH_TOPOLOGY header in text
@@ -521,7 +521,7 @@ const OPTIONS_PATTERNS = [
     { re: /\n#{1,3}\s*[^\w\n].*?ALL[_\s]*AVAILABLE[_\s]*OPTIONS.*?\n/iu, minPosition: 0.15 },
 
     // Emoji-prefixed format (🛠️ ALL_AVAILABLE_OPTIONS) - standalone
-    { re: /\n?[🛠️🔧⚙️🛠]\s*ALL[_\s]*AVAILABLE[_\s]*OPTIONS\s*\n/iu, minPosition: 0.15 },
+    { re: /\n?(?:🛠️|🔧|⚙️|🛠)\s*ALL[_\s]*AVAILABLE[_\s]*OPTIONS\s*\n/iu, minPosition: 0.15 },
 
     // Standard delimiter with === or --- or unicode equivalent wrapper
     { re: /\n?[=\-─━═＝]{2,}\s*ALL[_\s]*AVAILABLE[_\s]*OPTIONS\s*[=\-─━═＝]{2,}\n?/i, minPosition: 0 },
@@ -549,9 +549,9 @@ const OPTIONS_PATTERNS = [
 export function cleanNarrativeText(text: string): string {
     return text
         .replace(/\n---+\s*$/, '')
-        .replace(/\n#{1,3}\s*[🛠️🔧⚙️🛠]?\s*ALL[_\s]*AVAILABLE[_\s]*OPTIONS.*$/iu, '')
-        .replace(/\n#{1,3}\s*[🛠️🔧⚙️🛠]\s*$/iu, '')
-        .replace(/[🛠️🔧⚙️🛠]\s*$/iu, '')
+        .replace(/\n#{1,3}\s*(?:🛠️|🔧|⚙️|🛠)?\s*ALL[_\s]*AVAILABLE[_\s]*OPTIONS.*$/iu, '')
+        .replace(/\n#{1,3}\s*(?:🛠️|🔧|⚙️|🛠)\s*$/iu, '')
+        .replace(/(?:🛠️|🔧|⚙️|🛠)\s*$/iu, '')
         .trim();
 }
 
@@ -603,7 +603,7 @@ export function extractOptionsAndStrip(text: string): { text: string; options: s
     const listPreview = afterDelimiter.slice(0, 400);
 
     // Validate that what follows looks like structured content
-    const hasListStructure = /^\s*[-*•]\s+|\n\s*[-*•]\s+|^\s*\d+\.\s+|\n\s*\d+\.\s+|^\s*\*\*[^*]+\*\*|^\s*Theme\s*:|^\s*###?\s+|^\s*[A-Z][^:\n]{2,}:|[🌀🗿😀🙏🚀🛩]/iu.test(listPreview);
+    const hasListStructure = /^\s*[-*•]\s+|\n\s*[-*•]\s+|^\s*\d+\.\s+|\n\s*\d+\.\s+|^\s*\*\*[^*]+\*\*|^\s*Theme\s*:|^\s*###?\s+|^\s*[A-Z][^:\n]{2,}:|(?:🌀|🗿|😀|🙏|🚀|🛩)/iu.test(listPreview);
     const hasSubstantiveContent = afterDelimiter.length > 50 && (afterDelimiter.includes('\n') || afterDelimiter.includes(':'));
 
     if (!hasListStructure && !hasSubstantiveContent) {
@@ -1747,6 +1747,269 @@ export function validateBatchPrompt(prompt: string): { valid: boolean; issues: s
     };
 }
 
+// ============================================================================
+// CONCIERGE HANDOFF PARSING (Phase 2: Conversational Evolution)
+// ============================================================================
 
+/**
+ * Regex to match handoff blocks in concierge responses.
+ * Supports both standard and escaped tag variants.
+ * Format:
+ *   ---HANDOFF---
+ *   constraints: item1; item2
+ *   eliminated: item1; item2
+ *   preferences: item1; item2
+ *   context: item1; item2
+ *   >>>COMMIT: decision summary
+ *   ---/HANDOFF---
+ */
+const HANDOFF_REGEX = /---HANDOFF---\r?\n?([\s\S]*?)---\/HANDOFF---/;
 
+/**
+ * Regex for COMMIT signal (unique marker to avoid false positives)
+ */
+const COMMIT_MARKER_REGEX = />>>COMMIT:\s*(.+)$/m;
+
+/**
+ * Placeholders to reject - model echoing instructions verbatim
+ */
+const BLOCKED_COMMIT_PLACEHOLDERS = [
+    '[decision summary]',
+    '[what was decided and what user wants to do next]',
+    '[only if user commits to a plan or requests execution guidance — summarize decision and intent]',
+    '[only if user commits to a plan or requests execution guidance - summarize decision and intent]',
+];
+
+export interface ParsedHandoffResponse {
+    /** Response to show the user (handoff block stripped) */
+    userFacing: string;
+    /** Parsed handoff data or null if no handoff block found */
+    handoff: ConciergeDelta | null;
+}
+
+/**
+ * Parse concierge response to extract and strip handoff block.
+ * Returns both the user-facing text and the parsed handoff delta.
+ * 
+ * @param raw - Raw concierge response text
+ * @returns ParsedHandoffResponse with userFacing text and optional handoff
+ */
+export function parseHandoffResponse(raw: string): ParsedHandoffResponse {
+    if (!raw || typeof raw !== 'string') {
+        return { userFacing: raw || '', handoff: null };
+    }
+
+    const match = raw.match(HANDOFF_REGEX);
+
+    if (!match) {
+        return { userFacing: raw.trim(), handoff: null };
+    }
+
+    // Strip the handoff block from user-facing response
+    const userFacing = raw.replace(HANDOFF_REGEX, '').trim();
+
+    // Parse the handoff block content
+    const handoff = parseHandoffBlock(match[1]);
+
+    return { userFacing, handoff };
+}
+
+/**
+ * Parse the COMMIT field with echo rejection.
+ * Rejects template placeholders that indicate the model is echoing instructions.
+ * 
+ * @param text - Full handoff block content
+ * @returns Commit string or null if not found/rejected
+ */
+function parseCommitField(text: string): string | null {
+    const match = text.match(COMMIT_MARKER_REGEX);
+    if (!match?.[1]) return null;
+
+    const commitText = match[1].trim();
+    const lowerText = commitText.toLowerCase();
+
+    // 1. Block exact template placeholders
+    if (BLOCKED_COMMIT_PLACEHOLDERS.some(p => lowerText === p.toLowerCase())) {
+        return null;
+    }
+
+    // 2. Block short bracketed content (≤3 words) — likely placeholder
+    if (/^\[.+\]$/.test(commitText)) {
+        const inner = commitText.slice(1, -1).trim();
+        const wordCount = inner.split(/\s+/).length;
+        if (wordCount <= 3) {
+            return null;
+        }
+    }
+
+    return commitText;
+}
+
+/**
+ * Parse the content inside ---HANDOFF--- block into ConciergeDelta.
+ * Handles semicolon-separated values, COMMIT signal, and graceful degradation.
+ * 
+ * @param text - Content inside the handoff delimiters
+ * @returns Parsed ConciergeDelta structure
+ */
+function parseHandoffBlock(text: string): ConciergeDelta {
+    const delta: ConciergeDelta = {
+        constraints: [],
+        eliminated: [],
+        preferences: [],
+        context: [],
+        commit: null
+    };
+
+    if (!text || typeof text !== 'string') {
+        return delta;
+    }
+
+    // Parse COMMIT field separately (special handling with echo rejection)
+    delta.commit = parseCommitField(text);
+
+    // Parse other fields
+    for (const line of text.split('\n')) {
+        // Skip lines that are COMMIT (already handled)
+        if (line.trim().startsWith('>>>COMMIT:')) continue;
+
+        const colonIndex = line.indexOf(':');
+        if (colonIndex === -1) continue;
+
+        const key = line.slice(0, colonIndex).trim().toLowerCase();
+        const value = line.slice(colonIndex + 1).trim();
+
+        // Skip empty values or explicit "none"
+        if (!value || value.toLowerCase() === 'none') continue;
+
+        // Parse semicolon-separated items, trim whitespace, filter empty
+        const items = value
+            .split(';')
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+
+        // Map to appropriate bucket
+        switch (key) {
+            case 'constraints':
+            case 'constraint':
+                delta.constraints = items;
+                break;
+            case 'eliminated':
+            case 'eliminate':
+            case 'ruled out':
+            case 'ruled_out':
+                delta.eliminated = items;
+                break;
+            case 'preferences':
+            case 'preference':
+            case 'trade-offs':
+            case 'tradeoffs':
+                delta.preferences = items;
+                break;
+            case 'context':
+            case 'situation':
+            case 'situational':
+                delta.context = items;
+                break;
+            // Silently ignore unknown keys (including 'committed' etc)
+        }
+    }
+
+    return delta;
+}
+
+/**
+ * Check if a ConciergeDelta has any meaningful content.
+ * Used to avoid storing/injecting empty handoffs.
+ * 
+ * @param delta - ConciergeDelta to check
+ * @returns true if any bucket has items or commit is set
+ */
+export function hasHandoffContent(delta: ConciergeDelta | null | undefined): boolean {
+    if (!delta) return false;
+    return (
+        delta.constraints.length > 0 ||
+        delta.eliminated.length > 0 ||
+        delta.preferences.length > 0 ||
+        delta.context.length > 0 ||
+        delta.commit !== null
+    );
+}
+
+/**
+ * Format handoff context for injection into batch prompts.
+ * Returns a human-readable block if handoff has content, null otherwise.
+ * 
+ * @param handoff - ConciergeDelta to format
+ * @returns Formatted context string or null
+ */
+export function formatHandoffContext(handoff: ConciergeDelta | null | undefined): string | null {
+    if (!handoff || !hasHandoffContent(handoff)) {
+        return null;
+    }
+
+    const lines = ['[Conversation context since last analysis:]'];
+
+    if (handoff.constraints.length > 0) {
+        lines.push(`Constraints: ${handoff.constraints.join('; ')}`);
+    }
+    if (handoff.eliminated.length > 0) {
+        lines.push(`Ruled out: ${handoff.eliminated.join('; ')}`);
+    }
+    if (handoff.preferences.length > 0) {
+        lines.push(`Preferences: ${handoff.preferences.join('; ')}`);
+    }
+    if (handoff.context.length > 0) {
+        lines.push(`Situation: ${handoff.context.join('; ')}`);
+    }
+
+    return lines.join('\n');
+}
+
+/**
+ * Format handoff for echo back to concierge on Turn 3+.
+ * Shows current handoff state so model can update or carry forward.
+ * NEVER includes commit - that triggers fresh spawn, no echo needed.
+ * 
+ * @param handoff - Current ConciergeDelta to echo
+ * @returns Formatted echo block to prepend to user message
+ */
+export function formatHandoffEcho(handoff: ConciergeDelta): string {
+    const lines: string[] = ['Your current handoff (update if needed):'];
+    lines.push('');
+    lines.push('---CURRENT_HANDOFF---');
+
+    if (handoff.constraints.length > 0) {
+        lines.push(`constraints: ${handoff.constraints.join('; ')}`);
+    }
+    if (handoff.eliminated.length > 0) {
+        lines.push(`eliminated: ${handoff.eliminated.join('; ')}`);
+    }
+    if (handoff.preferences.length > 0) {
+        lines.push(`preferences: ${handoff.preferences.join('; ')}`);
+    }
+    if (handoff.context.length > 0) {
+        lines.push(`context: ${handoff.context.join('; ')}`);
+    }
+    // NEVER echo >>>COMMIT — it triggers fresh spawn, no echo needed
+
+    lines.push('---/CURRENT_HANDOFF---');
+    lines.push('');
+
+    return lines.join('\n');
+}
+
+/**
+ * Create an empty ConciergeDelta.
+ * Useful for initialization.
+ */
+export function createEmptyHandoff(): ConciergeDelta {
+    return {
+        constraints: [],
+        eliminated: [],
+        preferences: [],
+        context: [],
+        commit: null
+    };
+}
 

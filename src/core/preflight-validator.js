@@ -80,7 +80,7 @@ export async function runPreflight(request, authStatus, availableProviders) {
     let mapper = request.mapper || null;
     if (mapper && !isProviderAuthorized(mapper, authStatus)) {
         const candidate = selectBestProvider('mapping', authStatus, availableProviders);
-        if (locks.mapping) {
+        if (locks.mapping === mapper) {
             if (candidate) {
                 warnings.push(`Mapper "${mapper}" is locked but unauthorized; using "${candidate}" for this request`);
                 mapper = candidate;
@@ -98,14 +98,18 @@ export async function runPreflight(request, authStatus, availableProviders) {
     // === Singularity ===
     let singularity = request.singularity || null;
     if (singularity && !isProviderAuthorized(singularity, authStatus)) {
-        // We reuse the mapping lock for now or assume singularity follows best authorized
+        // We reuse the mapping lock for now
         const candidate = selectBestProvider('singularity', authStatus, availableProviders);
-        if (candidate) {
-            warnings.push(`Singularity provider "${singularity}" is unauthorized; using "${candidate}" for this request`);
-            singularity = candidate;
+        if (locks.mapping === singularity) {
+            if (candidate) {
+                warnings.push(`Singularity provider "${singularity}" is unauthorized; using "${candidate}" for this request`);
+                singularity = candidate;
+            } else {
+                warnings.push(`Singularity provider "${singularity}" is unauthorized and no fallback available`);
+                singularity = 'gemini';
+            }
         } else {
-            warnings.push(`Singularity provider "${singularity}" is unauthorized and no fallback available`);
-            singularity = 'gemini';
+            singularity = candidate || 'gemini';
         }
     } else if (!singularity) {
         singularity = selectBestProvider('singularity', authStatus, availableProviders) || 'gemini';

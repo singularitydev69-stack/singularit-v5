@@ -38,7 +38,7 @@ export function useCitationEvents(
         const num = handleExtraction(e.target as HTMLElement | null);
         if (!isNaN(num)) {
           if (e.cancelable) e.preventDefault();
-          e.stopPropagation();
+          e.stopImmediatePropagation();
           handleCitationClick(num);
         }
       } catch (err) {
@@ -52,7 +52,7 @@ export function useCitationEvents(
         const num = handleExtraction(e.target as HTMLElement | null);
         if (!isNaN(num)) {
           if (e.cancelable) e.preventDefault();
-          e.stopPropagation();
+          e.stopImmediatePropagation();
           handleCitationClick(num);
         }
       } catch (err) {
@@ -68,7 +68,7 @@ export function useCitationEvents(
           const num = handleExtraction(e.target as HTMLElement | null);
           if (!isNaN(num)) {
             if (e.cancelable) e.preventDefault();
-            e.stopPropagation();
+            e.stopImmediatePropagation();
             handleCitationClick(num);
           }
         }

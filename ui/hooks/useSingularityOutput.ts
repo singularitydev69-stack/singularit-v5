@@ -41,15 +41,35 @@ export function useSingularityOutput(aiTurnId: string | null, forcedProviderId?:
         if (!turn || turn.type !== "ai") return defaultState;
 
         const aiTurn = turn as AiTurn;
-        const singularityResponses = aiTurn.singularityResponses;
-
-        if (!singularityResponses || Object.keys(singularityResponses).length === 0) {
-            return defaultState;
-        }
-
         // Priority: Forced (Prop) > Pinned (User Selection) > Auto (Fallback)
         const pinnedId = pinnedProviders[aiTurnId];
         const effectiveProviderId = forcedProviderId || pinnedId;
+
+        const singularityOutput = aiTurn.singularityOutput;
+        if (singularityOutput && (!effectiveProviderId || String(effectiveProviderId) === String(singularityOutput.providerId))) {
+            return {
+                output: singularityOutput,
+                isLoading: false,
+                isError: false,
+                providerId: singularityOutput.providerId,
+                rawText: singularityOutput.text,
+                setPinnedProvider
+            };
+        }
+
+        const singularityResponses = aiTurn.singularityResponses;
+        if (!singularityResponses || Object.keys(singularityResponses).length === 0) {
+            if (effectiveProviderId) {
+                return {
+                    output: null,
+                    isLoading: true,
+                    isError: false,
+                    providerId: effectiveProviderId,
+                    setPinnedProvider
+                };
+            }
+            return defaultState;
+        }
 
         let providerId = effectiveProviderId;
         let responses = providerId ? singularityResponses[providerId] : undefined;

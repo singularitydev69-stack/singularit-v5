@@ -108,6 +108,11 @@ export function useResponsiveLoadingGuard(options?: {
       // Clear on fresh activity or when loading finishes
       if (!currentIsLoading || (currentLastActivity && currentLastActivity > baseline)) {
         setAlertText(null);
+        // Reset escalation flags if we see fresh activity
+        if (currentLastActivity && currentLastActivity > baseline) {
+          warnedRef.current = false;
+          escalatedRef.current = false;
+        }
         return;
       }
 

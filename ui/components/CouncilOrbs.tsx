@@ -226,24 +226,12 @@ export const CouncilOrbs: React.FC<CouncilOrbsProps> = React.memo(({
     const handleSelectSingularity = (pid: string) => {
         if (singularityProvider === pid) {
             setSingularityProvider(null);
-            try {
-                chrome?.storage?.local?.set?.({
-                    provider_lock_settings: {
-                        singularity_locked: false,
-                        singularity_provider: null
-                    }
-                });
-            } catch (e) { }
+            setProviderLock('singularity', true);
+            setLocks(prev => ({ ...prev, singularity: true }));
         } else {
             setSingularityProvider(pid);
-            try {
-                chrome?.storage?.local?.set?.({
-                    provider_lock_settings: {
-                        singularity_locked: true,
-                        singularity_provider: pid
-                    }
-                });
-            } catch (e) { }
+            setProviderLock('singularity', true);
+            setLocks(prev => ({ ...prev, singularity: true }));
         }
     };
 
@@ -445,6 +433,8 @@ export const CouncilOrbs: React.FC<CouncilOrbsProps> = React.memo(({
                                     const val = e.target.value;
                                     if (val === "") {
                                         setSingularityProvider(null);
+                                        setProviderLock('singularity', true);
+                                        setLocks(prev => ({ ...prev, singularity: true }));
                                     } else {
                                         handleSelectSingularity(val);
                                     }

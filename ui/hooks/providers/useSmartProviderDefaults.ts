@@ -3,6 +3,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import {
     providerAuthStatusAtom,
     mappingProviderAtom,
+    singularityProviderAtom,
     providerLocksAtom,
 } from '../../state/atoms';
 import {
@@ -25,6 +26,7 @@ import {
 export function useSmartProviderDefaults() {
     const authStatus = useAtomValue(providerAuthStatusAtom);
     const [mappingProvider, setMappingProvider] = useAtom(mappingProviderAtom);
+    const [singularityProvider, setSingularityProvider] = useAtom(singularityProviderAtom);
     const setLocks = useSetAtom(providerLocksAtom);
 
     // Track if we've done initial selection to avoid flash
@@ -56,8 +58,21 @@ export function useSmartProviderDefaults() {
             }
         }
 
+        // === Singularity Provider ===
+        if (!locks.singularity) {
+            const currentValid = singularityProvider && isProviderAuthorized(singularityProvider, authStatus);
+
+            if (!currentValid) {
+                const best = selectBestProvider('singularity', authStatus);
+                if (best && best !== singularityProvider) {
+                    console.log(`[SmartDefaults] Singularity: ${singularityProvider} → ${best}`);
+                    setSingularityProvider(best);
+                }
+            }
+        }
+
         setInitialized(true);
-    }, [authStatus, locks, mappingProvider, setMappingProvider]);
+    }, [authStatus, locks, mappingProvider, setMappingProvider, singularityProvider, setSingularityProvider]);
 
     return { isInitialized: initialized };
 }

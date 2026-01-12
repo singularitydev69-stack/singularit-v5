@@ -47,6 +47,7 @@ export const CognitiveOutputRenderer: React.FC<CognitiveOutputRendererProps> = (
     const setIsDecisionMapOpen = useSetAtom(isDecisionMapOpenAtom);
 
     const hasSingularityOutput = !!(
+        singularityState.output ||
         aiTurn.singularityOutput ||
         (aiTurn.singularityResponses && Object.keys(aiTurn.singularityResponses).length > 0)
     );

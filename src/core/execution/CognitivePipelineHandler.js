@@ -98,20 +98,44 @@ export class CognitivePipelineHandler {
       // Determine Singularity provider from request or context
       singularityProviderId = request?.singularity ||
         context?.singularityProvider ||
-        context?.meta?.singularity ||
-        request?.mapper ||
-        'gemini';
+        context?.meta?.singularity;
+
+      // Only proceed if a provider is requested or inherited.
+      // If request.singularity is explicitly undefined (from ui/hooks/chat/useChat.ts omitting it),
+      // we check if we should skip.
+      if (!singularityProviderId && !request?.singularity) {
+        console.log("[CognitiveHandler] No singularity provider requested - checking history...");
+      }
 
       if (stepExecutor && streamingManager) {
+        let conciergeState = null;
+        try {
+          conciergeState = await this.sessionManager.getConciergePhaseState(context.sessionId);
+        } catch (e) {
+          console.warn("[CognitiveHandler] Failed to fetch concierge state:", e);
+        }
+
+        // Fallback: If no provider requested, try to use the last one used in this session.
+        // If that fails, default to 'gemini'.
+        if (!singularityProviderId) {
+          singularityProviderId = conciergeState?.lastSingularityProviderId || 'gemini';
+        }
+
+        console.log(`[CognitiveHandler] Orchestrating singularity for Turn = ${context.canonicalAiTurnId}, Provider = ${singularityProviderId}`);
         let singularityStep = null;
         try {
-          const conciergeState = await this.sessionManager.getConciergePhaseState(context.sessionId);
           let structuralAnalysis = null;
           try {
             const { computeStructuralAnalysis } = await import('../PromptMethods');
             structuralAnalysis = computeStructuralAnalysis(mapperArtifact);
           } catch (e) {
             console.warn("[CognitiveHandler] computeStructuralAnalysis failed:", e);
+          }
+          if (structuralAnalysis && Array.isArray(structuralAnalysis.claimsWithLeverage) && Array.isArray(structuralAnalysis.edges)) {
+            context.storedAnalysis = {
+              claimsWithLeverage: structuralAnalysis.claimsWithLeverage,
+              edges: structuralAnalysis.edges,
+            };
           }
 
           let stanceSelection = null;
@@ -123,62 +147,107 @@ export class CognitivePipelineHandler {
             }
           } catch (_) { }
 
+          // ══════════════════════════════════════════════════════════════════
+          // HANDOFF V2: Determine if fresh instance needed
+          // ══════════════════════════════════════════════════════════════════
+          const lastProvider = conciergeState?.lastSingularityProviderId;
+          const providerChanged = lastProvider && lastProvider !== singularityProviderId;
+
+          // Fresh instance triggers:
+          // 1. First time concierge runs
+          // 2. Provider changed
+          // 3. COMMIT was detected in previous turn (commitPending)
+          const needsFreshInstance =
+            !conciergeState?.hasRunConcierge ||
+            providerChanged ||
+            conciergeState?.commitPending;
+
+          if (needsFreshInstance) {
+            console.log(`[CognitiveHandler] Fresh instance needed: first=${!conciergeState?.hasRunConcierge}, providerChanged=${providerChanged}, commitPending=${conciergeState?.commitPending}`);
+          }
+
+          // ══════════════════════════════════════════════════════════════════
+          // HANDOFF V2: Calculate turn number within current instance
+          // ══════════════════════════════════════════════════════════════════
+          let turnInCurrentInstance = conciergeState?.turnInCurrentInstance || 0;
+
+          if (needsFreshInstance) {
+            // Fresh spawn - reset to Turn 1
+            turnInCurrentInstance = 1;
+          } else {
+            // Same instance - increment turn
+            turnInCurrentInstance = (turnInCurrentInstance || 0) + 1;
+          }
+
+          console.log(`[CognitiveHandler] Turn in current instance: ${turnInCurrentInstance}`);
+
+          // ══════════════════════════════════════════════════════════════════
+          // HANDOFF V2: Build message based on turn number
+          // ══════════════════════════════════════════════════════════════════
           let conciergePrompt = null;
           let conciergePromptType = "standard";
           let conciergePromptSeed = null;
 
-          try {
-            const mod = await import('../ConciergeService');
-            const ConciergeService = mod.ConciergeService;
-            conciergePromptType = "standard";
+          const mod = await import('../ConciergeService');
+          const ConciergeService = mod.ConciergeService;
+
+          if (turnInCurrentInstance === 1) {
+            // Turn 1: Full buildConciergePrompt with prior context if fresh spawn after COMMIT
+            conciergePromptType = "full";
             conciergePromptSeed = {
               stance: stanceSelection?.stance || undefined,
-              isFirstTurn: !conciergeState?.hasRunConcierge,
+              isFirstTurn: true,
               activeWorkflow: conciergeState?.activeWorkflow || undefined,
             };
+
+            // If fresh spawn after COMMIT, inject prior context
+            if (conciergeState?.commitPending && conciergeState?.pendingHandoff) {
+              conciergePromptSeed.priorContext = {
+                handoff: conciergeState.pendingHandoff,
+                committed: conciergeState.pendingHandoff?.commit || null,
+              };
+              console.log(`[CognitiveHandler] Fresh spawn with prior context from COMMIT`);
+            }
+
             conciergePrompt = ConciergeService.buildConciergePrompt(
               userMessageForSingularity,
               structuralAnalysis,
               conciergePromptSeed,
             );
-          } catch (e) {
-            console.warn("[CognitiveHandler] Failed to build concierge prompt:", e);
+          } else if (turnInCurrentInstance === 2) {
+            // Turn 2: Inject handoff protocol
+            conciergePromptType = "protocol_injection";
+            conciergePrompt = ConciergeService.buildTurn2Message(userMessageForSingularity);
+            console.log(`[CognitiveHandler] Turn 2: injecting handoff protocol`);
+          } else {
+            // Turn 3+: Echo current handoff for updates
+            conciergePromptType = "handoff_echo";
+            const pendingHandoff = conciergeState?.pendingHandoff || null;
+            conciergePrompt = ConciergeService.buildTurn3PlusMessage(userMessageForSingularity, pendingHandoff);
+            console.log(`[CognitiveHandler] Turn ${turnInCurrentInstance}: echoing current handoff`);
           }
 
           if (!conciergePrompt) {
-            try {
-              const mod = await import('../ConciergeService');
-              const ConciergeService = mod.ConciergeService;
-              conciergePromptType = "standard";
-              conciergePrompt = ConciergeService.buildConciergePrompt(userMessageForSingularity, structuralAnalysis);
-            } catch (e) {
-              console.error("[CognitiveHandler] Fallback concierge prompt build failed:", e);
-              conciergePrompt = null;
-            }
+            // Fallback to standard prompt
+            console.warn("[CognitiveHandler] Prompt building failed, using fallback");
+            conciergePromptType = "standard_fallback";
+            conciergePrompt = ConciergeService.buildConciergePrompt(userMessageForSingularity, structuralAnalysis);
           }
 
           // ══════════════════════════════════════════════════════════════════
-          // FEATURE 2: Detect provider change and reset context (preserve batch data)
+          // Provider context: continueThread based on fresh instance need
           // ══════════════════════════════════════════════════════════════════
-          const lastProvider = conciergeState?.lastSingularityProviderId;
-          const providerChanged = lastProvider && lastProvider !== singularityProviderId;
-
           let providerContexts = undefined;
-          let shouldInitialize = !conciergeState?.hasRunConcierge;
 
-          // Force fresh context when provider changes
-          if (providerChanged) {
-            console.log(`[CognitiveHandler] Provider changed ${lastProvider} -> ${singularityProviderId}, resetting context`);
-            shouldInitialize = true;
-          }
-
-          if (shouldInitialize && singularityProviderId) {
+          if (needsFreshInstance && singularityProviderId) {
+            // Fresh spawn: get new chatId/cursor from provider
             providerContexts = {
               [singularityProviderId]: {
                 meta: {},
                 continueThread: false,
               },
             };
+            console.log(`[CognitiveHandler] Setting continueThread: false for fresh instance`);
           }
 
           singularityStep = {
@@ -216,20 +285,55 @@ export class CognitivePipelineHandler {
           if (singularityResult) {
             try {
               singularityProviderId = singularityResult?.providerId || singularityProviderId;
+
+              // ══════════════════════════════════════════════════════════════════
+              // HANDOFF V2: Parse handoff from response (Turn 2+)
+              // ══════════════════════════════════════════════════════════════════
+              let parsedHandoff = null;
+              let commitPending = false;
+              let userFacingText = singularityResult?.text || "";
+
+              if (turnInCurrentInstance >= 2) {
+                try {
+                  const { parseHandoffResponse, hasHandoffContent } = await import('../../../shared/parsing-utils');
+                  const parsed = parseHandoffResponse(singularityResult?.text || '');
+
+                  if (parsed.handoff && hasHandoffContent(parsed.handoff)) {
+                    parsedHandoff = parsed.handoff;
+
+                    // Check for COMMIT signal
+                    if (parsed.handoff.commit) {
+                      commitPending = true;
+                      console.log(`[CognitiveHandler] COMMIT detected: ${parsed.handoff.commit}`);
+                    }
+                  }
+
+                  // Use user-facing version (handoff stripped)
+                  userFacingText = parsed.userFacing;
+                } catch (e) {
+                  console.warn('[CognitiveHandler] Handoff parsing failed:', e);
+                }
+              }
+
+              // ══════════════════════════════════════════════════════════════════
+              // HANDOFF V2: Update concierge phase state
+              // ══════════════════════════════════════════════════════════════════
               const next = {
                 ...(conciergeState || {}),
                 lastSingularityProviderId: singularityProviderId,
                 hasRunConcierge: true,
+                // Handoff V2 fields
+                turnInCurrentInstance,
+                pendingHandoff: parsedHandoff || conciergeState?.pendingHandoff || null,
+                commitPending,
               };
 
-              // ══════════════════════════════════════════════════════════════════
-              // FEATURE 2: Track last provider for change detection on next turn
-              // ══════════════════════════════════════════════════════════════════
               await this.sessionManager.setConciergePhaseState(context.sessionId, next);
+
               const effectiveProviderId =
                 singularityResult?.providerId || singularityProviderId;
               singularityOutput = {
-                text: singularityResult?.text || "",
+                text: userFacingText, // Use handoff-stripped text
                 providerId: effectiveProviderId,
                 timestamp: Date.now(),
                 leakageDetected: singularityResult?.output?.leakageDetected || false,
@@ -251,7 +355,7 @@ export class CognitivePipelineHandler {
                   0,
                   {
                     ...(singularityResult.output || {}),
-                    text: singularityOutput.text,
+                    text: userFacingText, // Persist handoff-stripped text
                     status: 'completed',
                     meta: {
                       ...(singularityResult.output?.meta || {}),
@@ -259,6 +363,10 @@ export class CognitivePipelineHandler {
                       frozenSingularityPromptType: conciergePromptType,
                       frozenSingularityPromptSeed: conciergePromptSeed,
                       frozenSingularityPrompt: conciergePrompt,
+                      // Handoff V2 metadata
+                      turnInCurrentInstance,
+                      handoffDetected: !!parsedHandoff,
+                      commitDetected: commitPending,
                     }
                   }
                 );
@@ -272,7 +380,10 @@ export class CognitivePipelineHandler {
                   sessionId: context.sessionId,
                   stepId: singularityStep.stepId,
                   status: "completed",
-                  result: singularityResult,
+                  result: {
+                    ...singularityResult,
+                    text: userFacingText, // Send handoff-stripped to UI
+                  },
                 });
               } catch (_) { }
             } catch (e) {

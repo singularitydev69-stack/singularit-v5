@@ -258,12 +258,14 @@ export const batchAutoRunEnabledAtom = atomWithStorage<boolean>(
   false,
 );
 
-/**
- * Provider locks - stored in chrome.storage.local for backend access
- * UI writes, backend reads. Not atomWithStorage because we need chrome.storage.local
- */
-export const providerLocksAtom = atom<{ mapping: boolean }>({
+export interface ProviderLocks {
+  mapping: boolean;
+  singularity: boolean;
+}
+
+export const providerLocksAtom = atom<ProviderLocks>({
   mapping: false,
+  singularity: false,
 });
 
 

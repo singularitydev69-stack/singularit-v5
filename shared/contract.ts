@@ -39,6 +39,27 @@ export interface SingularityOutput {
   pipeline?: SingularityPipelineSnapshot | null;
 }
 
+/**
+ * Concierge Handoff Delta
+ * Captures conversational evolution between batch invocations.
+ * The concierge appends invisible handoff blocks to responses, which are
+ * parsed and stored. When batch is re-invoked, this context is injected
+ * to inform batch models of constraints, eliminations, preferences, and
+ * situational context that emerged during concierge-only turns.
+ */
+export interface ConciergeDelta {
+  /** Hard limits: "2-person team", "budget under 5K/month" */
+  constraints: string[];
+  /** Ruled out options: "AWS Lambda (cold start concerns)" */
+  eliminated: string[];
+  /** Trade-off signals: "simplicity over performance" */
+  preferences: string[];
+  /** Situational facts: "early-stage startup", "pre-revenue" */
+  context: string[];
+  /** COMMIT signal - user committed to a plan, triggers fresh spawn. Null if not committed. */
+  commit: string | null;
+}
+
 export interface Claim {
   id: string;
   label: string;
@@ -116,6 +137,7 @@ export interface ProblemStructure {
   };
   signalStrength?: number;
   runnerUpPattern?: ProblemStructure["primaryPattern"];
+  compositeShape?: CompositeShape; // NEW: Peak-first composite shape detection
 }
 
 export type ClaimRole = 'anchor' | 'branch' | 'challenger' | 'supplement';
@@ -463,6 +485,105 @@ export type ShapeData =
   | DimensionalShapeData
   | ExploratoryShapeData
   | ContextualShapeData;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NEW COMPOSITE SHAPE TYPES (Peak-First Detection)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type PrimaryShape = 'convergent' | 'forked' | 'parallel' | 'constrained' | 'sparse';
+
+export type SecondaryPatternType =
+  | 'challenged'
+  | 'keystone'
+  | 'chain'
+  | 'fragile'
+  | 'conditional'
+  | 'orphaned'
+  | 'dissent';
+
+export interface SecondaryPattern {
+  type: SecondaryPatternType;
+  severity: 'high' | 'medium' | 'low';
+  data: ChallengedPatternData | KeystonePatternData | ChainPatternData |
+  FragilePatternData | ConditionalPatternData | OrphanedPatternData | DissentPatternData;
+}
+
+export interface ChallengedPatternData {
+  challenges: Array<{
+    challenger: { id: string; label: string; supportRatio: number };
+    target: { id: string; label: string; supportRatio: number };
+  }>;
+}
+
+export interface KeystonePatternData {
+  keystone: { id: string; label: string; supportRatio: number };
+  dependents: string[];
+  cascadeSize: number;
+}
+
+export interface ChainPatternData {
+  chain: string[];
+  length: number;
+  weakLinks: string[];
+}
+
+export interface FragilePatternData {
+  fragilities: Array<{
+    peak: { id: string; label: string };
+    weakFoundation: { id: string; label: string; supportRatio: number };
+  }>;
+}
+
+export interface ConditionalPatternData {
+  conditions: Array<{ id: string; label: string; branches: string[] }>;
+}
+
+export interface OrphanedPatternData {
+  orphans: Array<{ id: string; label: string; supportRatio: number; reason: string }>;
+}
+
+export interface DissentPatternData {
+  voices: Array<{
+    id: string;
+    label: string;
+    text: string;
+    supportRatio: number;
+    insightType: 'leverage_inversion' | 'explicit_challenger' | 'unique_perspective' | 'edge_case';
+    targets?: string[];
+    insightScore: number;
+  }>;
+  strongestVoice: {
+    id: string;
+    label: string;
+    text: string;
+    supportRatio: number;
+    whyItMatters: string;
+  } | null;
+  suppressedDimensions: string[];
+}
+
+export interface PeakAnalysis {
+  peaks: EnrichedClaim[];
+  hills: EnrichedClaim[];
+  floor: EnrichedClaim[];
+  peakIds: Set<string>;
+  peakConflicts: Edge[];
+  peakTradeoffs: Edge[];
+  peakSupports: Edge[];
+  peakUnconnected: boolean;
+}
+
+export interface CompositeShape {
+  primary: PrimaryShape;
+  primaryConfidence: number;
+  patterns: SecondaryPattern[];
+  peaks: Array<{ id: string; label: string; supportRatio: number }>;
+  peakRelationship: 'conflicting' | 'trading-off' | 'supporting' | 'independent' | 'none';
+  evidence: string[];
+  transferQuestion: string;
+  // For backwards compatibility with existing shape data builders
+  legacyPattern: ProblemStructure['primaryPattern'];
+}
 
 
 export interface CoreRatios {

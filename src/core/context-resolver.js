@@ -115,6 +115,7 @@ export class ContextResolver {
       lastTurnId: lastTurn.id,
       providerContexts: resolvedContexts,
       previousContext: lastTurn.lastContextSummary || null,
+      previousAnalysis: await this._resolveLastStoredAnalysis(sessionId, session, lastTurn),
     };
   }
 
@@ -216,6 +217,83 @@ export class ContextResolver {
       return null;
     } catch (e) {
       console.error("[ContextResolver] _getSessionMetadata failed:", e);
+      return null;
+    }
+  }
+
+  async _resolveLastStoredAnalysis(sessionId, session, lastTurn) {
+    const direct = this._extractStoredAnalysisFromTurn(lastTurn);
+    if (direct) return direct;
+
+    const structuralTurnId = session?.lastStructuralTurnId;
+    if (structuralTurnId) {
+      try {
+        const structuralTurn = await this._getTurn(structuralTurnId);
+        const fromStructural = this._extractStoredAnalysisFromTurn(structuralTurn);
+        if (fromStructural) return fromStructural;
+      } catch (_) { }
+    }
+
+    const fallbackFromMapper = await this._computeStoredAnalysisFromMapperArtifact(lastTurn?.mapperArtifact);
+    if (fallbackFromMapper) return fallbackFromMapper;
+
+    if (structuralTurnId) {
+      try {
+        const structuralTurn = await this._getTurn(structuralTurnId);
+        const fromMapper = await this._computeStoredAnalysisFromMapperArtifact(structuralTurn?.mapperArtifact);
+        if (fromMapper) return fromMapper;
+      } catch (_) { }
+    }
+
+    if (!structuralTurnId) {
+      try {
+        const turns = await this.sessionManager.adapter.getTurnsBySessionId(sessionId);
+        if (Array.isArray(turns) && turns.length > 0) {
+          for (let i = turns.length - 1; i >= 0; i--) {
+            const t = turns[i];
+            if (!t || typeof t !== "object") continue;
+            if (t.type !== "ai" && t.role !== "assistant") continue;
+
+            const stored = this._extractStoredAnalysisFromTurn(t);
+            if (stored) return stored;
+
+            const computed = await this._computeStoredAnalysisFromMapperArtifact(t.mapperArtifact);
+            if (computed) return computed;
+          }
+        }
+      } catch (_) { }
+    }
+
+    return null;
+  }
+
+  _extractStoredAnalysisFromTurn(turn) {
+    if (!turn || typeof turn !== "object") return null;
+    const candidate = turn.storedAnalysis || turn.structuralAnalysis || null;
+    if (!candidate || typeof candidate !== "object") return null;
+
+    const claimsWithLeverage = candidate.claimsWithLeverage;
+    const edges = candidate.edges;
+
+    if (!Array.isArray(claimsWithLeverage) || !Array.isArray(edges)) return null;
+    return { claimsWithLeverage, edges };
+  }
+
+  async _computeStoredAnalysisFromMapperArtifact(mapperArtifact) {
+    if (!mapperArtifact || typeof mapperArtifact !== "object") return null;
+    const claims = mapperArtifact.claims;
+    const edges = mapperArtifact.edges;
+    if (!Array.isArray(claims) || !Array.isArray(edges)) return null;
+    if (claims.length === 0 && edges.length === 0) return null;
+
+    try {
+      const mod = await import("./PromptMethods");
+      const computeStructuralAnalysis = mod?.computeStructuralAnalysis;
+      if (typeof computeStructuralAnalysis !== "function") return null;
+      const analysis = computeStructuralAnalysis(mapperArtifact);
+      if (!analysis || !Array.isArray(analysis.claimsWithLeverage) || !Array.isArray(analysis.edges)) return null;
+      return { claimsWithLeverage: analysis.claimsWithLeverage, edges: analysis.edges };
+    } catch (_) {
       return null;
     }
   }

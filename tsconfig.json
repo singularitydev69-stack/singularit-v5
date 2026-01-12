@@ -37,7 +37,8 @@
       "react",
       "react-dom",
       "chrome",
-      "node"
+      "node",
+      "jest"
     ]
   },
   "include": [

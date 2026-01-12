@@ -14,11 +14,25 @@ import {
     DimensionalShapeData,
     ExploratoryShapeData,
     ContextualShapeData,
+    // NEW: Composite shape types for peak-first detection
+    CompositeShape,
+    EnrichedClaim,
+    DissentPatternData,
+    ChallengedPatternData,
+    KeystonePatternData,
+    ChainPatternData,
+    FragilePatternData,
+    OrphanedPatternData,
+    // Handoff V2
+    ConciergeDelta,
 } from "../../shared/contract";
 import {
     parseConciergeOutput,
     validateBatchPrompt,
     ConciergeSignal,
+    // Handoff V2
+    hasHandoffContent,
+    formatHandoffEcho,
 } from "../../shared/parsing-utils";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -57,6 +71,15 @@ export interface WorkflowStep {
 }
 
 /**
+ * Prior context for fresh concierge instances after COMMIT or batch re-invoke.
+ * Contains distilled handoff data and the commit summary.
+ */
+export interface PriorContext {
+    handoff: ConciergeDelta | null;
+    committed: string | null;
+}
+
+/**
  * Options for building the concierge prompt
  */
 export interface ConciergePromptOptions {
@@ -64,6 +87,8 @@ export interface ConciergePromptOptions {
     conversationHistory?: string;
     activeWorkflow?: ActiveWorkflow;
     isFirstTurn?: boolean;
+    /** Prior context for fresh spawns after COMMIT or batch re-invoke */
+    priorContext?: PriorContext;
 }
 
 export interface HandleTurnResult {
@@ -71,6 +96,91 @@ export interface HandleTurnResult {
     stance: ConciergeStance;
     stanceReason: string;
     signal: ConciergeSignal | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HANDOFF V2: PROTOCOL AND MESSAGE BUILDERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Handoff protocol injected on Turn 2 of each concierge instance.
+ * Model learns this format and uses it for Turn 2+ until fresh spawn.
+ */
+export const HANDOFF_PROTOCOL = `## Handoff Protocol
+
+From this turn forward, if meaningful context emerges that would help future analysis, end your response with a handoff block:
+
+---HANDOFF---
+constraints: [hard limits - budget, team size, timeline, technical requirements]
+eliminated: [options ruled out, with brief reason]
+preferences: [trade-off signals user has indicated: "X over Y"]
+context: [situational facts revealed: stage, domain, team composition]
+>>>COMMIT: [only if user commits to a plan or requests execution guidance — summarize decision and intent]
+---/HANDOFF---
+
+Rules:
+• Only include if something worth capturing emerged this turn
+• Each handoff is COMPLETE — carry forward anything still true
+• Be terse: few words per item, semicolon-separated
+• >>>COMMIT is a special signal — only use when user is done exploring and ready to execute
+• Never reference the handoff in your visible response to the user
+• Omit the entire block if nothing meaningful emerged
+
+`;
+
+/**
+ * Build message for Turn 2: injects handoff protocol before user message.
+ */
+export function buildTurn2Message(userMessage: string): string {
+    return HANDOFF_PROTOCOL + `User: "${userMessage}"`;
+}
+
+/**
+ * Build message for Turn 3+: echoes current handoff before user message.
+ * Allows model to update or carry forward the handoff.
+ */
+export function buildTurn3PlusMessage(
+    userMessage: string,
+    pendingHandoff: ConciergeDelta | null
+): string {
+    if (pendingHandoff && hasHandoffContent(pendingHandoff)) {
+        return formatHandoffEcho(pendingHandoff) + `User: "${userMessage}"`;
+    }
+    return userMessage;
+}
+
+/**
+ * Build prior context section for fresh spawns.
+ * Woven into buildConciergePrompt() when priorContext is provided.
+ */
+function buildPriorContextSection(priorContext: PriorContext): string {
+    const parts: string[] = [];
+
+    // What was committed (most important)
+    if (priorContext.committed) {
+        parts.push(`## What's Been Decided\n\n${priorContext.committed}\n`);
+    }
+
+    // Distilled context from prior conversation
+    if (priorContext.handoff && hasHandoffContent(priorContext.handoff)) {
+        parts.push(`## Prior Context\n`);
+
+        if (priorContext.handoff.constraints.length > 0) {
+            parts.push(`**Constraints:** ${priorContext.handoff.constraints.join('; ')}`);
+        }
+        if (priorContext.handoff.eliminated.length > 0) {
+            parts.push(`**Ruled out:** ${priorContext.handoff.eliminated.join('; ')}`);
+        }
+        if (priorContext.handoff.preferences.length > 0) {
+            parts.push(`**Preferences:** ${priorContext.handoff.preferences.join('; ')}`);
+        }
+        if (priorContext.handoff.context.length > 0) {
+            parts.push(`**Situation:** ${priorContext.handoff.context.join('; ')}`);
+        }
+        parts.push('');
+    }
+
+    return parts.length > 0 ? parts.join('\n') + '\n' : '';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -761,46 +871,49 @@ function buildGenericBrief(analysis: StructuralAnalysis): string {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function getShapeGuidance(shape: ProblemStructure): string {
+    // Check for composite shape
+    const composite = shape.compositeShape;
+    const hasDissentPattern = composite?.patterns.some(p => p.type === 'dissent');
+
     const guidance: Record<ProblemStructure['primaryPattern'], string> = {
-        settled: `**Shape Note: SETTLED**
-The landscape has strong agreement. Speak with confidence—the structure supports it.
-Lead with the answer. If the user probes, challenge assumptions or explore edge cases.
-Watch for blind spots in the consensus.`,
+        settled: `**Shape Note: CONVERGENT**
+Strong agreement exists. ${hasDissentPattern ? 'But there is dissent—surface it.' : 'Watch for blind spots in unanimous consensus.'}
+Lead with the answer, but make the minority report visible. Consensus isn't always correct.`,
 
-        contested: `**Shape Note: CONTESTED**
-Genuine disagreement exists on a clear axis. Surface this tension naturally.
-Present both sides as valid depending on priorities. Don't pick a side unless user gives context.
-Help them see what choosing requires.`,
+        contested: `**Shape Note: FORKED**
+Genuine disagreement exists between well-supported positions. This is a real fork, not uncertainty.
+Present both paths as valid. Help them see what each choice requires and forecloses.
+Don't pick a side unless they give you context that resolves the fork.`,
 
-        keystone: `**Shape Note: KEYSTONE**
+        keystone: `**Shape Note: HUB-CENTRIC**
 Everything hinges on one critical claim. Center your response around it.
-Show what depends on it. If user asks "why" or "what if," stress-test the keystone.
-If it fails, acknowledge the cascade.`,
+Show what depends on it. If they ask "why" or "what if," stress-test the keystone.
+If it fails, acknowledge the cascade honestly.`,
 
-        linear: `**Shape Note: LINEAR**
-There's a clear sequence. Walk through steps in order.
-Emphasize why order matters (prerequisites, dependencies).
-Help user identify where they are in the chain.`,
+        linear: `**Shape Note: SEQUENTIAL**
+There's a clear sequence with prerequisites. Walk through steps in order.
+Emphasize why order matters. Help them identify where they are in the chain.
+Flag weak links—steps with low support that could break the sequence.`,
 
-        tradeoff: `**Shape Note: TRADEOFF**
-Explicit tradeoffs exist. No universal best.
+        tradeoff: `**Shape Note: CONSTRAINED**
+Explicit tradeoffs exist. There is no universal best.
 Map what is sacrificed for what is gained. Ask about priorities.
-Don't force a choice—show consequences of each path.`,
+Don't force a choice—show the consequences of each path.`,
 
-        dimensional: `**Shape Note: DIMENSIONAL**
-Multiple valid paths depending on context. Different situations require different approaches.
-Ask which dimension matters to them. Present options tied to conditions.
-Don't collapse prematurely.`,
+        dimensional: `**Shape Note: PARALLEL**
+Multiple valid dimensions exist that don't directly interact.
+Ask which dimension matters most to them. Don't collapse prematurely.
+Each dimension may have its own answer.`,
 
-        contextual: `**Shape Note: CONTEXTUAL**
-The answer depends on specific external factors. Don't guess.
-Ask for the missing context directly.
-Explain why the answer changes based on that context.`,
+        contextual: `**Shape Note: CONDITIONAL**
+The answer depends on specific context you don't have.
+Ask for the missing context directly. Explain how the answer changes based on it.
+Don't guess—show the branches and let them pick.`,
 
-        exploratory: `**Shape Note: EXPLORATORY**
-Structure is sparse. Low confidence. Be honest about uncertainty.
-Don't overstate. Ask clarifying questions that would collapse ambiguity.
-Identify what context would help.`,
+        exploratory: `**Shape Note: SPARSE**
+Structure is weak. Low confidence. Be honest about uncertainty.
+Surface what signals exist. Ask clarifying questions.
+Don't fabricate certainty where none exists.`,
     };
 
     return guidance[shape.primaryPattern] || guidance.exploratory;
@@ -933,12 +1046,12 @@ export function buildStructuralBrief(analysis: StructuralAnalysis): string {
 function getTopologyName(pattern: string): string {
     const names: Record<string, string> = {
         settled: "CONVERGENT",
-        contested: "TENSE",
+        contested: "FORKED",
         keystone: "HUB-CENTRIC",
         linear: "SEQUENTIAL",
-        tradeoff: "EITHER-OR",
-        dimensional: "MULTI-FACETED",
-        exploratory: "UNMAPPED",
+        tradeoff: "CONSTRAINED",
+        dimensional: "PARALLEL",
+        exploratory: "SPARSE",
         contextual: "CONDITIONAL",
     };
     return names[pattern] || pattern.toUpperCase();
@@ -948,25 +1061,25 @@ function getTopologyDescription(pattern: string): string {
     const descriptions: Record<string, string> = {
         settled:
             "Multiple reasoning paths converge on a central cluster. " +
-            "This could indicate genuine consensus OR shared blind spot OR narrow question scope.",
+            "Strong agreement exists, but check the minority report—consensus can mask blind spots.",
         contested:
-            "The structure contains explicit opposition between supported positions. " +
-            "This represents a detected fork, not uncertainty—choosing one path forecloses another.",
+            "The structure contains genuine opposition between well-supported positions. " +
+            "This is a real fork—choosing one path forecloses another. The question is: what determines which path applies?",
         keystone:
-            "The structure radiates from a central hub. Many claims connect to one foundation. " +
-            "This is topological centrality—structural importance, not proven truth.",
+            "The structure radiates from a central hub. Many claims depend on one foundation. " +
+            "If that foundation is wrong, the cascade is significant.",
         linear:
             "The structure forms sequential chains of prerequisites. " +
-            "The mapper detected ordered dependencies, but the actual rigidity is unverified.",
+            "Order matters. Validate early steps before proceeding.",
         tradeoff:
-            "The structure contains explicit either-or relationships. " +
-            "This represents detected optimization boundaries—the problem may not allow maximizing both.",
+            "The structure contains explicit optimization boundaries. " +
+            "You cannot maximize both. What are you optimizing for?",
         dimensional:
             "The structure fragments into independent clusters. " +
-            "Different lenses on the problem that operate with limited cross-connection.",
+            "Different lenses on the problem that don't directly interact. Which dimension matters most?",
         exploratory:
             "The structure is sparse or fragmented. Low coherence. " +
-            "Either the domain is underexplored, the question was ambiguous, or structure exists but was not detected.",
+            "Either the domain is underexplored, the question was ambiguous, or perspectives diverged significantly.",
         contextual:
             "The structure is conditional—different paths activate based on specific inputs. " +
             "There is no universal answer; it depends on context the system does not have.",
@@ -974,8 +1087,220 @@ function getTopologyDescription(pattern: string): string {
     return descriptions[pattern] || "Pattern detected but not characterized.";
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPOSITE SHAPE FLOW/FRICTION BUILDERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function buildFlowFromComposite(composite: CompositeShape, modelCount: number): string {
+    const peakLabels = composite.peaks.slice(0, 3).map(p => `"${p.label}"`).join(', ');
+
+    let flow = '';
+
+    switch (composite.primary) {
+        case 'convergent':
+            flow += `**Narrative Gravity:** The landscape converges on ${peakLabels}.\n\n`;
+            flow += composite.peaks.length === 1
+                ? `This is the dominant position with ${(composite.peaks[0].supportRatio * 100).toFixed(0)}% support.\n\n`
+                : `These positions reinforce each other.\n\n`;
+
+            composite.peaks.forEach(p => {
+                flow += `• **${p.label}** [${(p.supportRatio * 100).toFixed(0)}%]\n`;
+            });
+            break;
+
+        case 'forked':
+            flow += `**The Fork:** Two or more valid paths exist.\n\n`;
+            flow += `${peakLabels} are all well-supported but conflict.\n`;
+            flow += `The choice between them depends on values you haven't stated.\n\n`;
+
+            flow += `**Peak Relationship:** ${composite.peakRelationship}\n\n`;
+
+            composite.peaks.forEach(p => {
+                flow += `• **${p.label}** [${(p.supportRatio * 100).toFixed(0)}%]\n`;
+            });
+            break;
+
+        case 'parallel':
+            flow += `**Independent Dimensions:** ${peakLabels} address different aspects of the problem.\n\n`;
+            flow += `They don't conflict because they don't interact.\n\n`;
+
+            composite.peaks.forEach(p => {
+                flow += `• **${p.label}** [${(p.supportRatio * 100).toFixed(0)}%]\n`;
+            });
+            break;
+
+        case 'constrained':
+            flow += `**Optimization Boundary:** ${peakLabels} represent tradeoffs.\n\n`;
+            flow += `Choosing one means sacrificing aspects of others.\n\n`;
+
+            composite.peaks.forEach(p => {
+                flow += `• **${p.label}** [${(p.supportRatio * 100).toFixed(0)}%]\n`;
+            });
+            break;
+
+        case 'sparse':
+            flow += `**Weak Signal:** No position has strong support.\n\n`;
+            flow += `The models diverge significantly, suggesting the problem is underspecified.\n\n`;
+
+            if (composite.peaks.length > 0) {
+                flow += `**Strongest signals:**\n`;
+                composite.peaks.forEach(p => {
+                    flow += `• **${p.label}** [${(p.supportRatio * 100).toFixed(0)}%]\n`;
+                });
+            }
+            break;
+    }
+
+    flow += '\n';
+    return flow;
+}
+
+function buildFrictionFromComposite(
+    composite: CompositeShape,
+    claims: EnrichedClaim[],
+    modelCount: number
+): string {
+    const frictionParts: string[] = [];
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DISSENT IS PRIMARY FOR CONVERGENT/PARALLEL SHAPES
+    // ─────────────────────────────────────────────────────────────────────────
+    const dissentPattern = composite.patterns.find(p => p.type === 'dissent');
+
+    if (composite.primary === 'convergent' || composite.primary === 'parallel') {
+        if (dissentPattern) {
+            const dissent = dissentPattern.data as DissentPatternData;
+
+            if (dissent.strongestVoice) {
+                frictionParts.push(
+                    `**The Minority Report:** "${dissent.strongestVoice.label}" ` +
+                    `(${(dissent.strongestVoice.supportRatio * 100).toFixed(0)}% support)\n\n` +
+                    `${dissent.strongestVoice.whyItMatters}\n\n` +
+                    `> "${dissent.strongestVoice.text}"`
+                );
+            }
+
+            if (dissent.voices.length > 1) {
+                const others = dissent.voices.slice(1, 3);
+                frictionParts.push(
+                    `**Other Dissenting Voices:**\n` +
+                    others.map(v => `• "${v.label}" (${v.insightType.replace(/_/g, ' ')})`).join('\n')
+                );
+            }
+
+            if (dissent.suppressedDimensions.length > 0) {
+                frictionParts.push(
+                    `**Suppressed Dimensions:** The minority uniquely represents: ${dissent.suppressedDimensions.join(', ')}`
+                );
+            }
+        } else {
+            frictionParts.push(
+                `**Unanimous Consensus Warning:** No dissenting voices detected.\n` +
+                `Either the answer is genuinely clear, or all models share a blind spot.`
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OTHER PATTERNS
+    // ─────────────────────────────────────────────────────────────────────────
+    const otherPatterns = composite.patterns
+        .filter(p => p.type !== 'dissent')
+        .sort((a, b) => {
+            const severityOrder = { high: 0, medium: 1, low: 2 };
+            return severityOrder[a.severity] - severityOrder[b.severity];
+        });
+
+    for (const pattern of otherPatterns.slice(0, 2)) {
+        switch (pattern.type) {
+            case 'fragile': {
+                const frag = pattern.data as FragilePatternData;
+                frictionParts.push(
+                    `**Fragile Foundation:** "${frag.fragilities[0].peak.label}" depends on ` +
+                    `"${frag.fragilities[0].weakFoundation.label}" ` +
+                    `(${(frag.fragilities[0].weakFoundation.supportRatio * 100).toFixed(0)}% support).\n` +
+                    `The consensus rests on contested ground.`
+                );
+                break;
+            }
+
+            case 'keystone': {
+                const ks = pattern.data as KeystonePatternData;
+                frictionParts.push(
+                    `**Keystone Risk:** Everything flows from "${ks.keystone.label}".\n` +
+                    `If this breaks, ${ks.cascadeSize} dependent claim(s) fall with it.`
+                );
+                break;
+            }
+
+            case 'challenged': {
+                if (!dissentPattern) {
+                    const ch = pattern.data as ChallengedPatternData;
+                    frictionParts.push(
+                        `**Under Siege:** The floor is challenged by ${ch.challenges.length} claim(s).`
+                    );
+                }
+                break;
+            }
+
+            case 'chain': {
+                const chain = pattern.data as ChainPatternData;
+                if (chain.weakLinks.length > 0) {
+                    frictionParts.push(
+                        `**Chain Vulnerability:** ${chain.weakLinks.length} weak link(s) in the sequence.`
+                    );
+                }
+                break;
+            }
+
+            case 'orphaned': {
+                const orphans = pattern.data as OrphanedPatternData;
+                frictionParts.push(
+                    `**Disconnected Signal:** "${orphans.orphans[0].label}" has high support ` +
+                    `but isn't connected to anything. It may represent a missed dimension.`
+                );
+                break;
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FOR FORKED SHAPES: What both sides miss
+    // ─────────────────────────────────────────────────────────────────────────
+    if (composite.primary === 'forked' && dissentPattern) {
+        const dissent = dissentPattern.data as DissentPatternData;
+        if (dissent.strongestVoice) {
+            frictionParts.push(
+                `**What Both Forks Miss:** "${dissent.strongestVoice.label}" isn't aligned with either position—it may represent the actual answer.`
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FOR CONSTRAINED SHAPES: Emphasize the cost
+    // ─────────────────────────────────────────────────────────────────────────
+    if (composite.primary === 'constrained') {
+        frictionParts.push(
+            `**There is no resolution to a true tradeoff.** Choosing means accepting the cost of what you did not choose.`
+        );
+    }
+
+    if (frictionParts.length === 0) {
+        frictionParts.push(`**No significant friction detected.**`);
+    }
+
+    return frictionParts.join('\n\n');
+}
+
 function buildFlowSection(analysis: StructuralAnalysis): string {
-    const { shape, landscape } = analysis;
+    const { shape, landscape, claimsWithLeverage } = analysis;
+
+    // Use composite shape if available (new system)
+    if (shape.compositeShape) {
+        return buildFlowFromComposite(shape.compositeShape, landscape.modelCount);
+    }
+
+    // Fall back to legacy builders
     const data = shape.data;
 
     if (!data) return "Structure data not available.\n";
@@ -1230,7 +1555,14 @@ function buildContextualFlow(data: ContextualShapeData, modelCount: number): str
 }
 
 function buildFrictionSection(analysis: StructuralAnalysis): string {
-    const { shape, landscape } = analysis;
+    const { shape, landscape, claimsWithLeverage } = analysis;
+
+    // Use composite shape if available (new system)
+    if (shape.compositeShape) {
+        return buildFrictionFromComposite(shape.compositeShape, claimsWithLeverage, landscape.modelCount);
+    }
+
+    // Fall back to legacy builders
     const data = shape.data;
 
     if (!data) return "Friction data not available.\n";
@@ -1529,15 +1861,17 @@ function collectFragilities(analysis: StructuralAnalysis): string[] {
 
 function buildTransferSection(analysis: StructuralAnalysis): string {
     const { shape } = analysis;
-    const data = shape.data;
 
     let transfer = "";
 
-    const transferQuestion = getTransferQuestion(shape.primaryPattern, data);
+    // Use composite shape transfer question if available (prioritizes dissent for convergent shapes)
+    const transferQuestion = shape.compositeShape?.transferQuestion ||
+        getTransferQuestion(shape.primaryPattern, shape.data);
+
     transfer += `**The question this hands to you:**\n\n`;
     transfer += `${transferQuestion}\n\n`;
 
-    const whatWouldHelp = getWhatWouldHelp(shape.primaryPattern, data, analysis);
+    const whatWouldHelp = getWhatWouldHelp(shape.primaryPattern, shape.data, analysis);
     if (whatWouldHelp.length > 0) {
         transfer += `**What would help:**\n`;
         whatWouldHelp.forEach(w => {
@@ -1663,6 +1997,11 @@ export function buildConciergePrompt(
         ? `\n${stanceGuidance.framing}\n`
         : '';
 
+    // Handoff V2: Prior context for fresh spawns after COMMIT or batch re-invoke
+    const priorContextSection = options?.priorContext
+        ? buildPriorContextSection(options.priorContext)
+        : '';
+
     const historySection = options?.conversationHistory
         ? `## Conversation\n${options.conversationHistory}\n\n`
         : '';
@@ -1677,7 +2016,7 @@ export function buildConciergePrompt(
 
 "${userMessage}"
 
-${historySection}## What You Know
+${priorContextSection}${historySection}## What You Know
 
 ${structuralBrief}
 
@@ -1888,4 +2227,8 @@ export const ConciergeService = {
     // Re-export signal parsing for convenience
     parseConciergeOutput,
     validateBatchPrompt,
+    // Handoff V2
+    HANDOFF_PROTOCOL,
+    buildTurn2Message,
+    buildTurn3PlusMessage,
 };

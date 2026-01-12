@@ -8,6 +8,7 @@ import {
   isProviderAuthError,
   createMultiProviderAuthError
 } from '../../utils/ErrorHandler.js';
+import { buildReactiveBridge } from '../../services/ReactiveBridge';
 // computeExplore import removed (unused)
 // persona signal injections removed (absorbed by Concierge)
 
@@ -36,16 +37,40 @@ export class StepExecutor {
     } = step.payload;
 
     let enhancedPrompt = prompt;
-    if (previousContext) {
-      enhancedPrompt = `You are part of the council.Context(backdrop only—do not summarize or re - answer):
+    let bridgeContext = "";
 
-${previousContext}
+    // Reactive Bridge Injection (Priority 1)
+    if (step.payload.previousAnalysis) {
+      try {
+        const bridge = buildReactiveBridge(prompt, step.payload.previousAnalysis);
+        if (bridge) {
+          bridgeContext = bridge.context;
+          console.log(`[StepExecutor] Injected reactive bridge context: ${bridge.matched.map(m => m.label).join(', ')}`);
+        }
+      } catch (err) {
+        console.warn("[StepExecutor] Failed to build reactive bridge:", err);
+      }
+    }
+
+    if (previousContext) {
+      // Re-construct with proper ordering: Bridge (Priority 1) > Previous Answer (Priority 2)
+      const contextBlock = [
+        bridgeContext,
+        previousContext
+      ].filter(Boolean).join("\n\n");
+
+      enhancedPrompt = `You are part of the council. Context (backdrop only—do not summarize or re-answer):
+
+${contextBlock}
 
 Answer the user's message directly. Use context only to disambiguate.
 
-  < user_prompt >
+<user_prompt>
   ${prompt}
-</user_prompt > `;
+</user_prompt>`;
+    } else if (bridgeContext) {
+      // Fallback: Bridge exists but no previous context summary
+      enhancedPrompt = `${bridgeContext}\n\n${prompt}`;
     }
 
     const providerStatuses = [];
