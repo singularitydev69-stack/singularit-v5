@@ -55,9 +55,15 @@ export function useLoadingWatchdog() {
 }
 
 /**
- * useResponsiveLoadingGuard
- * Non-destructive guard that observes loading and activity and surfaces alerts
- * rather than resetting state. Intended to replace useLoadingWatchdog.
+ * Observes loading activity and surfaces non-destructive user alerts when processing appears stalled.
+ *
+ * While connected and loading, periodically checks time since the last activity and sets a mild alert after
+ * `idleWarnMs` milliseconds of inactivity and a stronger alert after `idleCriticalMs` milliseconds. Clears alerts
+ * and resets warning/escalation state when loading stops or fresh activity is observed.
+ *
+ * @param options - Configuration for idle thresholds
+ * @param options.idleWarnMs - Milliseconds of inactivity before showing a mild warning (default: 15000)
+ * @param options.idleCriticalMs - Milliseconds of inactivity before showing a critical escalation (default: 45000)
  */
 export function useResponsiveLoadingGuard(options?: {
   idleWarnMs?: number;

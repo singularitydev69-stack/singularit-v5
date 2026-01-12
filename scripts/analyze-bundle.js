@@ -11,6 +11,13 @@ function formatBytes(bytes) {
     return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
 }
 
+/**
+ * Generate a textual analysis report for an esbuild metafile and a human-readable bundle name.
+ *
+ * @param {string} metaPath - Filesystem path to the JSON metafile produced by the build analysis.
+ * @param {string} bundleName - Human-readable name to display as the report header.
+ * @returns {string} A formatted report containing a summary (total input, bundle size, compression), the top 100 largest modules with sizes and line counts, and the top 15 heaviest packages; if the metafile is missing, returns a short message indicating it was not found.
+ */
 function analyzeMetafile(metaPath, bundleName) {
     if (!fs.existsSync(metaPath)) {
         return `\n${bundleName}: Metafile not found (Run 'npm run build:analyze' first)\n`;

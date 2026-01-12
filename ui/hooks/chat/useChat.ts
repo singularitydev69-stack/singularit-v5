@@ -39,6 +39,20 @@ import type {
   ProviderResponse,
 } from "../../types";
 
+/**
+ * Provides chat state and a set of actions for sending messages, managing conversations, and loading or deleting sessions.
+ *
+ * The hook coordinates UI state with backend workflow execution and transforms backend session history into the local turn map and ID list. Returned actions include creating a new chat, sending a user message (initialize vs continuation), selecting and loading a history session, deleting one or many background sessions (clearing local state if the active session is removed), and aborting the active workflow.
+ *
+ * @returns An object with the following properties:
+ *  - `sendMessage(prompt, mode)` – send a user message as a `"new"` or `"continuation"` flow (constructs and executes a workflow request and writes the user turn locally).
+ *  - `newChat()` – reset to a fresh conversation (clears session id, turns map, and turn ids).
+ *  - `selectChat(session)` – load a history session and populate turns and ids from backend history.
+ *  - `deleteChat(sessionId)` – delete a single background session; clears local state if it was active.
+ *  - `deleteChats(sessionIds)` – delete multiple background sessions; clears local state if the active session was removed.
+ *  - `abort()` – request abort of the active workflow and set UI to awaiting action.
+ *  - `messages` – current messages list (backward-compatible derived value).
+ */
 export function useChat() {
   // Reads
   const selectedModels = useAtomValue(selectedModelsAtom);

@@ -1,5 +1,12 @@
 import { useEffect } from 'react';
 
+/**
+ * Registers global document listeners to intercept citation interactions and invoke a callback with the citation number.
+ *
+ * Sets up capture-phase, non-passive listeners for "click", "auxclick", and "pointerdown" that extract a numeric citation id from an anchor href starting with "citation:" or from elements with `data-citation-number` / `data-citation`. When a citation number is found, the handler prevents the default action (when cancelable), stops further propagation immediately, and calls `handleCitationClick` with the parsed integer. Listeners are removed on cleanup or when `handleCitationClick` changes.
+ *
+ * @param handleCitationClick - Callback invoked with the parsed citation number when a citation interaction is intercepted
+ */
 export function useCitationEvents(
   handleCitationClick: (num: number) => void
 ) {

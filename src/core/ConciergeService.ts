@@ -129,7 +129,10 @@ Rules:
 `;
 
 /**
- * Build message for Turn 2: injects handoff protocol before user message.
+ * Prepares a Turn 2 message by prepending the handoff protocol block to the user's input.
+ *
+ * @param userMessage - The raw user input to include after the handoff protocol
+ * @returns The composed message containing the handoff protocol followed by `User: "<userMessage>"`
  */
 export function buildTurn2Message(userMessage: string): string {
     return HANDOFF_PROTOCOL + `User: "${userMessage}"`;
@@ -150,8 +153,10 @@ export function buildTurn3PlusMessage(
 }
 
 /**
- * Build prior context section for fresh spawns.
- * Woven into buildConciergePrompt() when priorContext is provided.
+ * Render a markdown snippet summarizing prior committed decisions and distilled handoff context for new agent spawns.
+ *
+ * @param priorContext - Prior context containing an optional committed decision string and an optional handoff delta with constraints, eliminated items, preferences, and situational context
+ * @returns A markdown string containing "What's Been Decided" and/or "Prior Context" sections when data is present, or an empty string when no prior context exists
  */
 function buildPriorContextSection(priorContext: PriorContext): string {
     const parts: string[] = [];
@@ -868,7 +873,12 @@ function buildGenericBrief(analysis: StructuralAnalysis): string {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SHAPE GUIDANCE
-// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * Produce a concise, stance-aware guidance note tailored to the provided problem shape.
+ *
+ * @param shape - The analyzed ProblemStructure whose primaryPattern and composite patterns determine the guidance.
+ * @returns A human-readable guidance string summarizing how to approach the problem given its pattern (e.g., CONVERGENT, FORKED, PARALLEL, etc.). The guidance will surface dissent or missing context when relevant.
+ */
 
 export function getShapeGuidance(shape: ProblemStructure): string {
     // Check for composite shape
@@ -1043,6 +1053,12 @@ export function buildStructuralBrief(analysis: StructuralAnalysis): string {
     return brief;
 }
 
+/**
+ * Map an internal shape pattern identifier to a human-readable topology name.
+ *
+ * @param pattern - Internal pattern identifier (for example `'settled'`, `'contested'`, `'keystone'`)
+ * @returns The corresponding topology label (e.g. `"CONVERGENT"`, `"FORKED"`); if `pattern` is not recognized, the uppercase form of `pattern`
+ */
 function getTopologyName(pattern: string): string {
     const names: Record<string, string> = {
         settled: "CONVERGENT",
@@ -1057,6 +1073,12 @@ function getTopologyName(pattern: string): string {
     return names[pattern] || pattern.toUpperCase();
 }
 
+/**
+ * Return a human-readable description for a topology pattern.
+ *
+ * @param pattern - The topology pattern name (e.g., 'settled', 'contested', 'keystone', 'linear', 'tradeoff', 'dimensional', 'exploratory', 'contextual')
+ * @returns A descriptive explanation of the specified topology pattern, or a generic message when the pattern is not recognized.
+ */
 function getTopologyDescription(pattern: string): string {
     const descriptions: Record<string, string> = {
         settled:
@@ -1089,7 +1111,16 @@ function getTopologyDescription(pattern: string): string {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPOSITE SHAPE FLOW/FRICTION BUILDERS
-// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * Builds a concise, human-readable "Flow" narrative that summarizes the composite shape's peaks and their relationships.
+ *
+ * The returned text highlights up to three peak labels, emits a short framing sentence based on the composite's primary topology
+ * (e.g., convergent, forked, parallel, constrained, sparse), and lists each peak with its support percentage.
+ *
+ * @param composite - Composite shape data containing `primary`, `peaks`, and `peakRelationship` used to choose and populate the narrative
+ * @param modelCount - Number of models or sources aggregated to construct the composite (used for contextual framing)
+ * @returns A formatted narrative string describing the composite flow and a bulleted list of peaks with support percentages
+ */
 
 function buildFlowFromComposite(composite: CompositeShape, modelCount: number): string {
     const peakLabels = composite.peaks.slice(0, 3).map(p => `"${p.label}"`).join(', ');
@@ -1155,6 +1186,14 @@ function buildFlowFromComposite(composite: CompositeShape, modelCount: number): 
     return flow;
 }
 
+/**
+ * Builds a concise, human-readable friction narrative that highlights risks, dissenting views, and structural weaknesses for a composite shape.
+ *
+ * @param composite - Composite shape metadata including the primary topology and detected pattern buckets (e.g., dissent, keystone, fragile).
+ * @param claims - Enriched claims from the analysis; used to provide context for identified friction points.
+ * @param modelCount - Number of models or sources aggregated into the composite; used to contextualize support ratios and consensus strength.
+ * @returns A markdown-formatted string summarizing detected friction points (dissenting voices, fragilities, keystone risk, chain vulnerabilities, orphaned signals, and tradeoff costs), or a short message when no significant friction is found.
+ */
 function buildFrictionFromComposite(
     composite: CompositeShape,
     claims: EnrichedClaim[],
@@ -1292,6 +1331,14 @@ function buildFrictionFromComposite(
     return frictionParts.join('\n\n');
 }
 
+/**
+ * Produce a human-readable "Flow" narrative describing how claims progress or relate within the provided structural analysis.
+ *
+ * Chooses the most specific flow generator available: prefers a composite-shape narrative when the analysis includes composite data, otherwise uses the legacy pattern-specific flow builders. If required shape data is missing or the pattern is unsupported, the returned string contains a short diagnostic message.
+ *
+ * @param analysis - Structural analysis object used to select and build the flow narrative
+ * @returns The assembled flow narrative as a string, or a brief diagnostic message if flow content cannot be produced
+ */
 function buildFlowSection(analysis: StructuralAnalysis): string {
     const { shape, landscape, claimsWithLeverage } = analysis;
 
@@ -1530,6 +1577,13 @@ function buildExploratoryFlow(data: ExploratoryShapeData, modelCount: number): s
     return flow;
 }
 
+/**
+ * Build a human-readable "Flow" section for a contextual shape, describing the governing condition, branches, and default path.
+ *
+ * @param data - Contextual shape details including the governing condition, branches (each with condition and claims), and an optional defaultPath
+ * @param modelCount - The total number of models used to compute per-claim support counts
+ * @returns A formatted markdown string with the governing condition, a list of branches and their claims (showing support as `supportCount/modelCount`), and an optional default path section
+ */
 function buildContextualFlow(data: ContextualShapeData, modelCount: number): string {
     let flow = `**Governing Condition:** ${data.governingCondition}\n\n`;
 
@@ -1554,6 +1608,12 @@ function buildContextualFlow(data: ContextualShapeData, modelCount: number): str
     return flow;
 }
 
+/**
+ * Builds the "Friction" section: a human-readable narrative of structural risks, tensions, and failure modes for the given analysis.
+ *
+ * @param analysis - Structural analysis containing the shape, landscape, and claims used to construct the friction narrative
+ * @returns A string describing points of friction and risk for the analysis; returns a brief fallback message when friction data is unavailable or the pattern is unsupported
+ */
 function buildFrictionSection(analysis: StructuralAnalysis): string {
     const { shape, landscape, claimsWithLeverage } = analysis;
 
@@ -1859,6 +1919,12 @@ function collectFragilities(analysis: StructuralAnalysis): string[] {
     return fragilities;
 }
 
+/**
+ * Constructs the transfer section containing a prioritized transfer question and optional "what would help" items derived from the structural analysis.
+ *
+ * @param analysis - Structural analysis of the shape used to derive the transfer question and supporting help items
+ * @returns A markdown-formatted string with a "**The question this hands to you:**" prompt followed by the transfer question and, if present, a "**What would help:**" bullet list
+ */
 function buildTransferSection(analysis: StructuralAnalysis): string {
     const { shape } = analysis;
 
@@ -1981,7 +2047,18 @@ function formatActiveWorkflow(workflow: ActiveWorkflow): string {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // THE PROMPT BUILDER
-// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * Assemble the full concierge prompt presented to the LLM based on the user's query and structural analysis.
+ *
+ * The prompt includes: the user query, an optional prior-context handoff section, optional conversation history,
+ * an optional active workflow summary, the structural brief derived from `analysis`, shape-specific guidance,
+ * stance-specific behavior and voice guidance, and a fixed "Never" constraint list.
+ *
+ * @param userMessage - The user's query to be embedded in the prompt
+ * @param analysis - Structural analysis used to generate the knowledge/briefing and shape guidance
+ * @param options - Optional settings that can modify the prompt (e.g., stance, conversationHistory, activeWorkflow, priorContext)
+ * @returns The composed prompt string ready to be sent to the language model
+ */
 
 export function buildConciergePrompt(
     userMessage: string,

@@ -544,7 +544,10 @@ const OPTIONS_PATTERNS = [
 ];
 
 /**
- * Clean narrative text by removing trailing separators and leftover header fragments
+ * Remove trailing separators and leftover ALL_AVAILABLE_OPTIONS header fragments from narrative text.
+ *
+ * @param text - The narrative string to clean
+ * @returns The narrative with trailing separator lines, ALL_AVAILABLE_OPTIONS headers, and trailing tool emoji removed
  */
 export function cleanNarrativeText(text: string): string {
     return text
@@ -567,7 +570,12 @@ export function cleanOptionsText(text: string): string {
 }
 
 /**
- * Extract ALL_AVAILABLE_OPTIONS from text and return cleaned narrative
+ * Extracts an ALL_AVAILABLE_OPTIONS section from input text and returns the remaining narrative with the cleaned options block.
+ *
+ * The function detects and strips any GRAPH_TOPOLOGY region first, locates a best-matching options delimiter, validates that the following content resembles structured options, and returns a cleaned narrative and options text if found.
+ *
+ * @param text - The input markdown/plain text to scan for an ALL_AVAILABLE_OPTIONS block.
+ * @returns An object with `text` containing the cleaned narrative (top portion of the input) and `options` containing the cleaned options block or `null` when no valid options section is detected.
  */
 export function extractOptionsAndStrip(text: string): { text: string; options: string | null } {
     if (!text || typeof text !== 'string') return { text: text || '', options: null };
@@ -1701,7 +1709,13 @@ function parseSignalContent(content: string): ConciergeSignal {
 }
 
 /**
- * Validate a batch prompt for quality
+ * Assess the quality of a batch prompt and identify shortcomings.
+ *
+ * Validates that the prompt defines an expert role, provides sufficient context and specificity,
+ * avoids overly generic role descriptions, and includes a clear output specification.
+ *
+ * @param prompt - The full batch prompt text to validate (expected to include role, context, and desired output).
+ * @returns `true` if the prompt passes all checks, `false` otherwise, plus `issues` with human-readable descriptions of detected problems.
  */
 export function validateBatchPrompt(prompt: string): { valid: boolean; issues: string[] } {
     const issues: string[] = [];
@@ -1788,11 +1802,12 @@ export interface ParsedHandoffResponse {
 }
 
 /**
- * Parse concierge response to extract and strip handoff block.
- * Returns both the user-facing text and the parsed handoff delta.
- * 
+ * Extracts a ---HANDOFF--- block from a concierge response and returns the remaining user-facing text and the parsed handoff.
+ *
+ * If no handoff block is present or the input is not a string, the original (trimmed) text is returned as `userFacing` and `handoff` is `null`.
+ *
  * @param raw - Raw concierge response text
- * @returns ParsedHandoffResponse with userFacing text and optional handoff
+ * @returns A ParsedHandoffResponse with `userFacing` (the response with any handoff block removed) and `handoff` (the parsed ConciergeDelta or `null`)
  */
 export function parseHandoffResponse(raw: string): ParsedHandoffResponse {
     if (!raw || typeof raw !== 'string') {
@@ -1815,11 +1830,10 @@ export function parseHandoffResponse(raw: string): ParsedHandoffResponse {
 }
 
 /**
- * Parse the COMMIT field with echo rejection.
- * Rejects template placeholders that indicate the model is echoing instructions.
- * 
- * @param text - Full handoff block content
- * @returns Commit string or null if not found/rejected
+ * Extracts the COMMIT value from a handoff block, rejecting common placeholder echoes.
+ *
+ * @param text - The full handoff block content to search for a COMMIT marker
+ * @returns The extracted commit string, or `null` if no valid commit is found or it is rejected as a placeholder
  */
 function parseCommitField(text: string): string | null {
     const match = text.match(COMMIT_MARKER_REGEX);
@@ -1846,11 +1860,15 @@ function parseCommitField(text: string): string | null {
 }
 
 /**
- * Parse the content inside ---HANDOFF--- block into ConciergeDelta.
- * Handles semicolon-separated values, COMMIT signal, and graceful degradation.
- * 
- * @param text - Content inside the handoff delimiters
- * @returns Parsed ConciergeDelta structure
+ * Parse a handoff block into a structured ConciergeDelta.
+ *
+ * Parses lines of the form `Key: value` (one per line), splits semicolon-separated values into arrays,
+ * and maps recognized keys into the corresponding delta buckets: constraints, eliminated, preferences, and context.
+ * Empty values or the literal `"none"` are ignored; unknown keys are silently skipped.
+ * The special `>>>COMMIT:` line is extracted via `parseCommitField` and placed into `commit` (string or `null`).
+ *
+ * @param text - The raw content found between the ---HANDOFF--- delimiters
+ * @returns A ConciergeDelta with populated `constraints`, `eliminated`, `preferences`, `context` arrays and optional `commit`
  */
 function parseHandoffBlock(text: string): ConciergeDelta {
     const delta: ConciergeDelta = {
@@ -1919,11 +1937,13 @@ function parseHandoffBlock(text: string): ConciergeDelta {
 }
 
 /**
- * Check if a ConciergeDelta has any meaningful content.
- * Used to avoid storing/injecting empty handoffs.
- * 
- * @param delta - ConciergeDelta to check
- * @returns true if any bucket has items or commit is set
+ * Determine whether a ConciergeDelta contains any handoff content.
+ *
+ * Checks whether any of the buckets (constraints, eliminated, preferences, context)
+ * contain items or whether a commit value is present.
+ *
+ * @param delta - The ConciergeDelta to inspect
+ * @returns `true` if any bucket has items or `commit` is non-null, `false` otherwise.
  */
 export function hasHandoffContent(delta: ConciergeDelta | null | undefined): boolean {
     if (!delta) return false;
@@ -2000,8 +2020,9 @@ export function formatHandoffEcho(handoff: ConciergeDelta): string {
 }
 
 /**
- * Create an empty ConciergeDelta.
- * Useful for initialization.
+ * Create a new empty handoff ConciergeDelta with all fields initialized.
+ *
+ * @returns A ConciergeDelta with empty arrays for `constraints`, `eliminated`, `preferences`, and `context`, and `commit` set to `null`
  */
 export function createEmptyHandoff(): ConciergeDelta {
     return {
@@ -2012,4 +2033,3 @@ export function createEmptyHandoff(): ConciergeDelta {
         commit: null
     };
 }
-
