@@ -39,10 +39,8 @@ Thumbs.db
 oldaiturnblock.tsx
 oldsynthesisbubble.tsx
 
-.md
-/.md
-.md/
-.txt
+*.md
+*.txt
 
 docs/*
 docs/
