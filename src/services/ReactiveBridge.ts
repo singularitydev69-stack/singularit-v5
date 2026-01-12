@@ -97,8 +97,12 @@ const TECH_TERM_REGEX = new RegExp(
 // ============================================================================
 
 /**
- * Levenshtein distance - measures character edits between strings
- * Optimized with early termination for large distances
+ * Compute the Levenshtein edit distance between two strings with an optional early cutoff.
+ *
+ * @param a - The first string to compare
+ * @param b - The second string to compare
+ * @param maxDistance - Maximum distance to consider; if the actual distance exceeds this value the function returns `maxDistance + 1`
+ * @returns The number of single-character edits required to transform `a` into `b`. Returns `maxDistance + 1` when the distance exceeds `maxDistance`.
  */
 function levenshtein(a: string, b: string, maxDistance: number = Infinity): number {
   if (a === b) return 0;
@@ -132,8 +136,14 @@ function levenshtein(a: string, b: string, maxDistance: number = Infinity): numb
 }
 
 /**
- * N-gram similarity - measures character overlap
- * Faster than Levenshtein for longer strings
+ * Computes character n-gram overlap similarity between two strings.
+ *
+ * Measures similarity as the size of the intersection of n-gram sets divided by their union (Jaccard index).
+ *
+ * @param a - First string to compare
+ * @param b - Second string to compare
+ * @param n - N-gram size to use (default 2). Values greater than the length of either string yield 0.
+ * @returns A number in [0, 1] representing n-gram overlap (1 = identical n-gram sets, 0 = no overlap)
  */
 function ngramSimilarity(a: string, b: string, n: number = 2): number {
   if (a === b) return 1.0;
@@ -160,7 +170,16 @@ function ngramSimilarity(a: string, b: string, n: number = 2): number {
 }
 
 /**
- * Combined fuzzy match - uses appropriate algorithm based on string length
+ * Determines whether two term strings should be considered a fuzzy match.
+ *
+ * Uses multiple strategies appropriate to term lengths (exact and substring checks,
+ * edit-distance for short tokens, and n-gram similarity for longer tokens) to
+ * decide if the terms are plausibly the same or related.
+ *
+ * @param userTerm - The term coming from the user's message
+ * @param indexedTerm - The term stored in the index to compare against
+ * @param threshold - Similarity threshold used for n-gram comparison (default: 0.8)
+ * @returns `true` if the terms are considered a match, `false` otherwise.
  */
 function fuzzyMatch(userTerm: string, indexedTerm: string, threshold: number = 0.8): boolean {
   // Exact match
@@ -192,8 +211,14 @@ function fuzzyMatch(userTerm: string, indexedTerm: string, threshold: number = 0
 // ============================================================================
 
 /**
- * ✅ ENHANCEMENT: Lightweight stemming for common suffixes (Coverage Fix)
- * Not a full Porter stemmer, but handles 80% of cases
+ * Produces a lightweight stem of a word by removing or normalizing common English suffixes.
+ *
+ * This is a heuristic, not a full linguistic stemmer: words of length three or less are returned unchanged,
+ * and common endings such as -ing, -ed, -ly, -ment, -ness, -ation, -tion, -sion, -able, -ible, -ful, and -less
+ * are simplified to produce a canonical root useful for approximate matching and indexing.
+ *
+ * @param word - The input word to stem
+ * @returns The stemmed form of `word` suitable for lightweight term normalization
  */
 function stem(word: string): string {
   if (word.length <= 3) return word; // Don't stem very short words
@@ -216,7 +241,15 @@ function stem(word: string): string {
 }
 
 /**
- * ✅ FIX: Optimized proper noun extraction with compiled regex (Performance Fix)
+ * Extracts likely proper nouns and recognized technical terms from the given text.
+ *
+ * The function skips the first token to avoid sentence-start capitalization, strips non-alphanumeric
+ * characters from detected proper nouns, and includes technical terms detected by the module's
+ * technical-term matcher. The result is deduplicated.
+ *
+ * @param text - Input text to analyze for proper nouns and technical terms
+ * @returns An array of unique terms: detected proper nouns (preserved as extracted) and detected
+ * technical terms (normalized to lower case)
  */
 function extractProperNouns(text: string): string[] {
   const words = text.split(/\s+/);
@@ -237,7 +270,15 @@ function extractProperNouns(text: string): string[] {
 }
 
 /**
- * Extract meaningful terms from text (with proper noun detection and stemming)
+ * Extracts normalized term variants from input text for indexing and matching.
+ *
+ * Returns a deduplicated set of lowercase tokens derived from the input, including:
+ * normalized words (stopwords and short tokens removed), stemmed variants, detected proper nouns,
+ * and label bigrams when `isLabel` is true.
+ *
+ * @param text - The source text or label to extract terms from.
+ * @param isLabel - If true, include adjacent-word bigrams to capture phrase signals from labels.
+ * @returns A deduplicated array of lowercase term tokens used for matching and indexing.
  */
 function extractTerms(text: string, isLabel: boolean): string[] {
   // Step 1: Extract proper nouns BEFORE lowercasing
@@ -274,9 +315,17 @@ function extractTerms(text: string, isLabel: boolean): string[] {
 // ============================================================================
 
 /**
- * Build term relationships from claim edges
- * Terms in supporting claims become "related" (domain-specific synonyms)
- * Terms in conflicting claims become "opposing"
+ * Builds mappings of related and opposing terms derived from claim edges.
+ *
+ * For edges of type `supports` or `prerequisite`, terms from the source and target claims
+ * are recorded as related to each other (bidirectional). For edges of type `conflicts`,
+ * terms from the source claim are recorded as opposing the terms in the target claim.
+ *
+ * @param edges - Array of claim edges that describe relationships between claims
+ * @param claimTerms - Map from claim ID to the list of extracted terms for that claim
+ * @returns An object with two maps:
+ *  - `related`: term -> set of contextually related terms
+ *  - `opposing`: term -> set of opposing terms
  */
 function buildTermRelations(
   edges: Edge[],
@@ -325,7 +374,18 @@ function buildTermRelations(
 // ============================================================================
 
 /**
- * Build searchable index from claims with term relations
+ * Builds a term index and relation mappings from the provided claims and edges.
+ *
+ * Extracts searchable terms from each claim's label and text, computes a simple
+ * IDF-like weight for each term, marks technical proper nouns, and derives
+ * related/opposing term relations based on the provided edges.
+ *
+ * @param claims - Array of enriched claims to extract and index terms from
+ * @param edges - Claim edges used to infer related and opposing term relations
+ * @returns A TermIndexWithRelations containing:
+ *  - `terms`: map of term → TermEntry (canonical form, claim ids, weight, isProperNoun)
+ *  - `claimTerms`: map of claim id → list of terms associated with that claim
+ *  - `relations`: related and opposing term mappings derived from edges
  */
 function buildTermIndex(
   claims: EnrichedClaim[],
@@ -379,7 +439,14 @@ function buildTermIndex(
 // ============================================================================
 
 /**
- * Helper to add scores from a term entry
+ * Incrementally adds weighted score contributions for each claim referenced by a term entry.
+ *
+ * Applies the term entry's weight scaled by `multiplier` and a proper-noun boost (if the entry is marked as a proper noun)
+ * and updates the provided `scores` map in place by adding the computed value to each claim's existing score.
+ *
+ * @param entry - The term entry containing `claimIds`, `weight`, and `isProperNoun` used to compute contributions
+ * @param multiplier - A scalar applied to the term weight to adjust contribution magnitude
+ * @param scores - Map from claim ID to accumulated score; this map is mutated by adding contributions for each claim
  */
 function addScores(
   entry: TermEntry,
@@ -394,7 +461,16 @@ function addScores(
 }
 
 /**
- * Match user message against term index with relation fallback
+ * Score claims by matching terms extracted from a user message against a term index.
+ *
+ * Extracts terms from `userMessage` and for each term attempts, in order: an exact match (weight 1.0),
+ * a fuzzy match against indexed terms (weight 0.9), and finally matches against related terms from
+ * `termIndex.relations.related` (weight 0.5). Scores from multiple matches accumulate per claim; related-term
+ * matches may contribute multiple times.
+ *
+ * @param userMessage - Free-text input to extract and match terms from
+ * @param termIndex - Term index (including relations) used to find matching TermEntry objects
+ * @returns A map from claim ID to aggregated score where higher values indicate stronger matches
  */
 function matchUserMessage(
   userMessage: string,
@@ -444,7 +520,12 @@ function matchUserMessage(
 
 // ============================================================================
 // BRIDGE BUILDER
-// ============================================================================
+/**
+ * Categorizes a claim's support ratio into a tier label.
+ *
+ * @param supportRatio - A numeric support ratio, typically between 0 and 1
+ * @returns `'peak'` if `supportRatio` > 0.5, `'hill'` if `supportRatio` > 0.25, `'floor'` otherwise
+ */
 
 function getTier(supportRatio: number): 'peak' | 'hill' | 'floor' {
   if (supportRatio > 0.5) return 'peak';
@@ -453,7 +534,11 @@ function getTier(supportRatio: number): 'peak' | 'hill' | 'floor' {
 }
 
 /**
- * Build reactive context bridge from user message and previous analysis
+ * Build a concise ReactiveBridge that injects the most relevant claims and edges from a previous analysis into the next prompt based on a user message.
+ *
+ * @param userMessage - The user's latest message to match against the previous analysis
+ * @param previousAnalysis - StoredAnalysis containing `claimsWithLeverage` and `edges` from a prior turn
+ * @returns A ReactiveBridge with up to three matched claims, up to four relevant edges, and a formatted context string; `null` if `previousAnalysis` is missing required arrays or no matching claims are found
  */
 export function buildReactiveBridge(
   userMessage: string,
@@ -528,7 +613,11 @@ export function buildReactiveBridge(
 }
 
 /**
- * Format bridge as compact text for injection into prompts
+ * Builds a compact, human-readable context string representing matched claims and their relationships.
+ *
+ * @param matched - Matched claims to include; each will appear with a tier icon, its label, and coverage percentage.
+ * @param edges - Relevant edges to include; each will be rendered as a single-line relationship between claim labels.
+ * @returns A multi-line string suitable for prompt injection containing a header, the matched claim lines, and optional edge lines.
  */
 function formatBridge(matched: MatchedClaim[], edges: RelevantEdge[]): string {
   const lines: string[] = ['[Context from prior turn:]'];
@@ -560,7 +649,12 @@ function formatBridge(matched: MatchedClaim[], edges: RelevantEdge[]): string {
 const termIndexCache = new Map<string, TermIndexWithRelations>();
 
 /**
- * Build reactive bridge with caching for repeated queries in same turn
+ * Constructs a ReactiveBridge for the given user message using a term index cached by turn to speed repeated queries.
+ *
+ * @param userMessage - The user's input text to match against the previous analysis
+ * @param previousAnalysis - Stored analysis containing `claimsWithLeverage` and `edges` used to build the term index
+ * @param turnId - Identifier for the current turn; used as the cache key for reusing a built term index
+ * @returns A ReactiveBridge containing matched claims, relevant edges, and a formatted context, or `null` if the input analysis is invalid or no matches were found
  */
 export function buildReactiveBridgeCached(
   userMessage: string,

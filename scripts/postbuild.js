@@ -34,7 +34,15 @@ if (fs.existsSync("src/oi.html"))
 // copy fonts
 if (fs.existsSync("ui/fonts")) {
   fs.mkdirSync("dist/ui/fonts", { recursive: true });
-  // Recursive copy function
+  /**
+   * Recursively copies a file or directory tree from a source path to a destination path.
+   *
+   * If `src` is a directory, creates `dest` (including parents) and copies each child recursively;
+   * if `src` is a file, copies it to `dest`.
+   *
+   * @param {string} src - Path to the source file or directory.
+   * @param {string} dest - Path where the source will be copied to.
+   */
   function copyRecursive(src, dest) {
     if (fs.statSync(src).isDirectory()) {
       fs.mkdirSync(dest, { recursive: true });

@@ -16,12 +16,12 @@ import {
 } from '@shared/provider-locks';
 
 /**
- * Automatically selects best available providers when:
- * 1. Auth status changes (provider logged in/out)
- * 2. Current selection becomes unauthorized
- * 3. No selection exists yet
- * 
- * Respects user locks - won't auto-change locked providers.
+ * Automatically choose sensible default providers when authentication or availability changes.
+ *
+ * Will set mapping and singularity providers to the best available option when no selection exists
+ * or the current selection is not authorized, while respecting user locks so locked providers are not changed.
+ *
+ * @returns An object with `isInitialized` set to `true` once the initial provider selection check has completed
  */
 export function useSmartProviderDefaults() {
     const authStatus = useAtomValue(providerAuthStatusAtom);
